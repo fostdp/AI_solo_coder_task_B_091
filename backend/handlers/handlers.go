@@ -305,14 +305,16 @@ func (h *Handler) CheckAlerts(c *gin.Context) {
 }
 
 type SimulateHydraulicRequest struct {
-	Width           float64 `json:"width" binding:"required"`
-	Height          float64 `json:"height" binding:"required"`
-	Slope           float64 `json:"slope" binding:"required"`
-	RoughnessCoeff  float64 `json:"roughness_coeff"`
-	SeepageCoeff    float64 `json:"seepage_coeff"`
-	Length          float64 `json:"length" binding:"required"`
-	InflowRate      float64 `json:"inflow_rate" binding:"required"`
-	Temperature     float64 `json:"temperature"`
+	Width                float64 `json:"width" binding:"required"`
+	Height               float64 `json:"height" binding:"required"`
+	Slope                float64 `json:"slope" binding:"required"`
+	RoughnessCoeff       float64 `json:"roughness_coeff"`
+	SeepageCoeff         float64 `json:"seepage_coeff"`
+	SoilType             string  `json:"soil_type"`
+	SoilCorrectionFactor float64 `json:"soil_correction_factor"`
+	Length               float64 `json:"length" binding:"required"`
+	InflowRate           float64 `json:"inflow_rate" binding:"required"`
+	Temperature          float64 `json:"temperature"`
 }
 
 func (h *Handler) SimulateHydraulic(c *gin.Context) {
@@ -328,18 +330,26 @@ func (h *Handler) SimulateHydraulic(c *gin.Context) {
 	if req.SeepageCoeff == 0 {
 		req.SeepageCoeff = 0.0001
 	}
+	if req.SoilType == "" {
+		req.SoilType = "gravel"
+	}
+	if req.SoilCorrectionFactor == 0 {
+		req.SoilCorrectionFactor = 1.0
+	}
 	if req.Temperature == 0 {
 		req.Temperature = 25.0
 	}
 
 	params := simulation.ChannelParams{
-		Width:          req.Width,
-		Height:         req.Height,
-		Slope:          req.Slope,
-		RoughnessCoeff: req.RoughnessCoeff,
-		SeepageCoeff:   req.SeepageCoeff,
-		Length:         req.Length,
-		Temperature:    req.Temperature,
+		Width:                req.Width,
+		Height:               req.Height,
+		Slope:                req.Slope,
+		RoughnessCoeff:       req.RoughnessCoeff,
+		SeepageCoeff:         req.SeepageCoeff,
+		SoilType:             req.SoilType,
+		SoilCorrectionFactor: req.SoilCorrectionFactor,
+		Length:               req.Length,
+		Temperature:          req.Temperature,
 	}
 
 	result := h.simulator.SimulateSegment(params, req.InflowRate)

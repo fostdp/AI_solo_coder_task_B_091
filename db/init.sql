@@ -34,9 +34,32 @@ CREATE TABLE IF NOT EXISTS aqueduct_segments (
     slope NUMERIC(8,6),
     roughness_coeff NUMERIC(8,4) DEFAULT 0.013,
     seepage_coeff NUMERIC(10,6) DEFAULT 0.0001,
+    soil_type VARCHAR(50) DEFAULT 'gravel',
+    soil_correction_factor NUMERIC(6,3) DEFAULT 1.0,
     is_main_channel BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 土壤类型渗透系数修正参考表
+CREATE TABLE IF NOT EXISTS soil_permeability (
+    id SERIAL PRIMARY KEY,
+    soil_type VARCHAR(50) NOT NULL UNIQUE,
+    soil_name VARCHAR(100),
+    base_permeability NUMERIC(10,6),
+    correction_factor NUMERIC(6,3),
+    description TEXT
+);
+
+INSERT INTO soil_permeability (soil_type, soil_name, base_permeability, correction_factor, description)
+VALUES
+    ('gravel', '戈壁砾石层', 0.0005, 1.8, '吐鲁番盆地表层，砾石含量高，渗透性强'),
+    ('sandy_loam', '砂壤土', 0.00015, 1.2, '砂壤混合层，中等渗透性'),
+    ('clay', '粘土层', 0.00002, 0.3, '低渗透性粘土层，渗流损失小'),
+    ('loess', '黄土层', 0.00008, 0.7, '风积黄土，渗透性中等偏低'),
+    ('sand', '砂层', 0.0003, 1.5, '纯砂层，渗透性较强'),
+    ('silt', '粉砂层', 0.00006, 0.6, '粉砂质，渗透性较弱'),
+    ('rock', '基岩风化层', 0.00001, 0.15, '风化岩层，几乎不渗透')
+ON CONFLICT DO NOTHING;
 
 -- 竖井筒表
 CREATE TABLE IF NOT EXISTS vertical_shafts (
@@ -226,12 +249,12 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- 插入暗渠段
-INSERT INTO aqueduct_segments (karez_id, segment_name, segment_order, start_elevation, end_elevation, length, width, height, slope, is_main_channel)
+INSERT INTO aqueduct_segments (karez_id, segment_name, segment_order, start_elevation, end_elevation, length, width, height, slope, soil_type, soil_correction_factor, is_main_channel)
 VALUES 
-(1, '首部暗渠段', 1, 85.0, 80.0, 800.0, 0.8, 1.2, 0.00625, true),
-(1, '中部暗渠段', 2, 80.0, 70.0, 1800.0, 0.8, 1.2, 0.00556, true),
-(1, '尾部暗渠段', 3, 70.0, 55.0, 1600.0, 0.8, 1.2, 0.00938, true),
-(1, '龙口段', 4, 55.0, -5.0, 1000.0, 1.0, 1.5, 0.06000, true)
+(1, '首部暗渠段', 1, 85.0, 80.0, 800.0, 0.8, 1.2, 0.00625, 'gravel', 1.8, true),
+(1, '中部暗渠段', 2, 80.0, 70.0, 1800.0, 0.8, 1.2, 0.00556, 'sandy_loam', 1.2, true),
+(1, '尾部暗渠段', 3, 70.0, 55.0, 1600.0, 0.8, 1.2, 0.00938, 'loess', 0.7, true),
+(1, '龙口段', 4, 55.0, -5.0, 1000.0, 1.0, 1.5, 0.06000, 'clay', 0.3, true)
 ON CONFLICT DO NOTHING;
 
 -- 插入竖井（生成20个竖井）

@@ -14,20 +14,22 @@ type KarezSystem struct {
 }
 
 type AqueductSegment struct {
-	ID              int       `json:"id"`
-	KarezID         int       `json:"karez_id"`
-	SegmentName     string    `json:"segment_name"`
-	SegmentOrder    int       `json:"segment_order"`
-	StartElevation  float64   `json:"start_elevation"`
-	EndElevation    float64   `json:"end_elevation"`
-	Length          float64   `json:"length"`
-	Width           float64   `json:"width"`
-	Height          float64   `json:"height"`
-	Slope           float64   `json:"slope"`
-	RoughnessCoeff  float64   `json:"roughness_coeff"`
-	SeepageCoeff    float64   `json:"seepage_coeff"`
-	IsMainChannel   bool      `json:"is_main_channel"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                   int       `json:"id"`
+	KarezID              int       `json:"karez_id"`
+	SegmentName          string    `json:"segment_name"`
+	SegmentOrder         int       `json:"segment_order"`
+	StartElevation       float64   `json:"start_elevation"`
+	EndElevation         float64   `json:"end_elevation"`
+	Length               float64   `json:"length"`
+	Width                float64   `json:"width"`
+	Height               float64   `json:"height"`
+	Slope                float64   `json:"slope"`
+	RoughnessCoeff       float64   `json:"roughness_coeff"`
+	SeepageCoeff         float64   `json:"seepage_coeff"`
+	SoilType             string    `json:"soil_type"`
+	SoilCorrectionFactor float64   `json:"soil_correction_factor"`
+	IsMainChannel        bool      `json:"is_main_channel"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type VerticalShaft struct {

@@ -17,13 +17,28 @@ func New(database *db.Database) *HydraulicSimulator {
 }
 
 type ChannelParams struct {
-	Width           float64
-	Height          float64
-	Slope           float64
-	RoughnessCoeff  float64
-	SeepageCoeff    float64
-	Length          float64
-	Temperature     float64
+	Width                float64
+	Height               float64
+	Slope                float64
+	RoughnessCoeff       float64
+	SeepageCoeff         float64
+	SoilType             string
+	SoilCorrectionFactor float64
+	Length               float64
+	Temperature          float64
+}
+
+var soilPermeabilityTable = map[string]struct {
+	BasePermeability float64
+	CorrectionFactor float64
+}{
+	"gravel":     {0.0005, 1.8},
+	"sandy_loam": {0.00015, 1.2},
+	"clay":       {0.00002, 0.3},
+	"loess":      {0.00008, 0.7},
+	"sand":       {0.0003, 1.5},
+	"silt":       {0.00006, 0.6},
+	"rock":       {0.00001, 0.15},
 }
 
 type SimulationOutput struct {
@@ -162,10 +177,36 @@ func (s *HydraulicSimulator) calculateSeepageLoss(params ChannelParams, depth fl
 	if depth <= 0 {
 		return 0
 	}
+
+	effectiveSeepageCoeff := s.getEffectiveSeepageCoeff(params)
+
 	wettedPerimeter := params.Width + 2*depth
-	seepageVelocity := params.SeepageCoeff * depth / params.Width
+	seepageVelocity := effectiveSeepageCoeff * depth / params.Width
 	seepageRate := wettedPerimeter * params.Length * seepageVelocity
 	return seepageRate
+}
+
+func (s *HydraulicSimulator) getEffectiveSeepageCoeff(params ChannelParams) float64 {
+	baseCoeff := params.SeepageCoeff
+
+	soilEntry, exists := soilPermeabilityTable[params.SoilType]
+	if !exists {
+		if params.SoilCorrectionFactor > 0 {
+			return baseCoeff * params.SoilCorrectionFactor
+		}
+		return baseCoeff
+	}
+
+	if baseCoeff <= 0 || baseCoeff == 0.0001 {
+		effectiveCoeff := soilEntry.BasePermeability * soilEntry.CorrectionFactor
+		return effectiveCoeff
+	}
+
+	if params.SoilCorrectionFactor > 0 {
+		return baseCoeff * params.SoilCorrectionFactor
+	}
+
+	return baseCoeff * soilEntry.CorrectionFactor
 }
 
 func (s *HydraulicSimulator) calculateEvaporationLoss(params ChannelParams, depth float64) float64 {
@@ -203,13 +244,15 @@ func (s *HydraulicSimulator) RunFullSimulation(ctx context.Context, karezID int)
 	currentFlow := inflowRate
 	for i, segment := range segments {
 		params := ChannelParams{
-			Width:          segment.Width,
-			Height:         segment.Height,
-			Slope:          segment.Slope,
-			RoughnessCoeff: segment.RoughnessCoeff,
-			SeepageCoeff:   segment.SeepageCoeff,
-			Length:         segment.Length,
-			Temperature:    25.0,
+			Width:                segment.Width,
+			Height:               segment.Height,
+			Slope:                segment.Slope,
+			RoughnessCoeff:       segment.RoughnessCoeff,
+			SeepageCoeff:         segment.SeepageCoeff,
+			SoilType:             segment.SoilType,
+			SoilCorrectionFactor: segment.SoilCorrectionFactor,
+			Length:               segment.Length,
+			Temperature:          25.0,
 		}
 
 		result := s.SimulateSegment(params, currentFlow)

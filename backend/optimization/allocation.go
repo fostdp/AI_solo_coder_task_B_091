@@ -125,37 +125,63 @@ func (wa *WaterAllocator) solveLinearProgramming(problem AllocationProblem) *All
 		return solution
 	}
 
-	c := make([]float64, n)
+	hasMinConstraint := false
+	for _, o := range problem.Oases {
+		if o.MinAllocation > 0 {
+			hasMinConstraint = true
+			break
+		}
+	}
+
+	numSlack := 0
+	if hasMinConstraint {
+		numSlack = n
+	}
+
+	c := make([]float64, n+numSlack)
 	for i, o := range problem.Oases {
 		weight := 1.0 / float64(o.Priority)
 		c[i] = weight * o.Demand
 	}
 
+	bigM := 1000.0
+	for i := 0; i < numSlack; i++ {
+		c[n+i] = -bigM
+	}
+
 	A := make([][]float64, 0)
 	b := make([]float64, 0)
 
-	totalRow := make([]float64, n)
-	for i := range totalRow {
+	totalRow := make([]float64, n+numSlack)
+	for i := 0; i < n; i++ {
 		totalRow[i] = 1.0
 	}
 	A = append(A, totalRow)
 	b = append(b, problem.TotalAvailableFlow)
 
 	for i, o := range problem.Oases {
-		row := make([]float64, n)
+		row := make([]float64, n+numSlack)
 		row[i] = 1.0
 		A = append(A, row)
 		b = append(b, math.Min(o.MaxAllocation, o.Demand))
 	}
 
 	for i, o := range problem.Oases {
-		row := make([]float64, n)
+		row := make([]float64, n+numSlack)
 		row[i] = -1.0
+		if hasMinConstraint && o.MinAllocation > 0 {
+			row[n+i] = 1.0
+		}
 		A = append(A, row)
-		b = append(b, -o.MinAllocation)
+		if hasMinConstraint && o.MinAllocation > 0 {
+			b = append(b, 0)
+		} else {
+			b = append(b, -o.MinAllocation)
+		}
 	}
 
 	lp := NewSimplexSolver(c, A, b)
+	lp.SetNumOriginalVars(n)
 	optVal, x := lp.Solve()
 
 	totalAllocated := 0.0
@@ -176,14 +202,15 @@ func (wa *WaterAllocator) solveLinearProgramming(problem AllocationProblem) *All
 }
 
 type SimplexSolver struct {
-	c     []float64
-	A     [][]float64
-	b     []float64
-	numVars int
-	numConstraints int
-	tableau [][]float64
-	basicVars []int
-	nonBasicVars []int
+	c               []float64
+	A               [][]float64
+	b               []float64
+	numVars         int
+	numOriginalVars int
+	numConstraints  int
+	tableau         [][]float64
+	basicVars       []int
+	nonBasicVars    []int
 }
 
 func NewSimplexSolver(c []float64, A [][]float64, b []float64) *SimplexSolver {
@@ -218,15 +245,20 @@ func NewSimplexSolver(c []float64, A [][]float64, b []float64) *SimplexSolver {
 	}
 
 	return &SimplexSolver{
-		c: c,
-		A: A,
-		b: b,
-		numVars: numVars,
-		numConstraints: numConstraints,
-		tableau: tableau,
-		basicVars: basicVars,
-		nonBasicVars: nonBasicVars,
+		c:               c,
+		A:               A,
+		b:               b,
+		numVars:         numVars,
+		numOriginalVars: numVars,
+		numConstraints:  numConstraints,
+		tableau:         tableau,
+		basicVars:       basicVars,
+		nonBasicVars:    nonBasicVars,
 	}
+}
+
+func (s *SimplexSolver) SetNumOriginalVars(n int) {
+	s.numOriginalVars = n
 }
 
 func (s *SimplexSolver) Solve() (float64, []float64) {
@@ -268,9 +300,9 @@ func (s *SimplexSolver) Solve() (float64, []float64) {
 		s.basicVars[leaving], s.nonBasicVars[entering%s.numVars] = entering, s.basicVars[leaving]
 	}
 
-	x := make([]float64, s.numVars)
+	x := make([]float64, s.numOriginalVars)
 	for i := 0; i < s.numConstraints; i++ {
-		if s.basicVars[i] < s.numVars {
+		if s.basicVars[i] < s.numOriginalVars {
 			x[s.basicVars[i]] = s.tableau[i][s.numVars+s.numConstraints]
 		}
 	}

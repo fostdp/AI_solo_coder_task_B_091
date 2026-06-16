@@ -145,7 +145,7 @@ func (d *Database) GetKarezSystems(ctx context.Context) ([]models.KarezSystem, e
 func (d *Database) GetAqueductSegments(ctx context.Context, karezID int) ([]models.AqueductSegment, error) {
 	rows, err := d.pool.Query(ctx,
 		`SELECT id, karez_id, segment_name, segment_order, start_elevation, end_elevation, 
-		 length, width, height, slope, roughness_coeff, seepage_coeff, is_main_channel, created_at 
+		 length, width, height, slope, roughness_coeff, seepage_coeff, soil_type, soil_correction_factor, is_main_channel, created_at 
 		 FROM aqueduct_segments WHERE karez_id = $1 ORDER BY segment_order`, karezID)
 	if err != nil {
 		return nil, err
@@ -155,11 +155,25 @@ func (d *Database) GetAqueductSegments(ctx context.Context, karezID int) ([]mode
 	var segments []models.AqueductSegment
 	for rows.Next() {
 		var s models.AqueductSegment
+		var soilType *string
+		var soilCorrection *float64
 		err := rows.Scan(&s.ID, &s.KarezID, &s.SegmentName, &s.SegmentOrder,
 			&s.StartElevation, &s.EndElevation, &s.Length, &s.Width, &s.Height,
-			&s.Slope, &s.RoughnessCoeff, &s.SeepageCoeff, &s.IsMainChannel, &s.CreatedAt)
+			&s.Slope, &s.RoughnessCoeff, &s.SeepageCoeff,
+			&soilType, &soilCorrection,
+			&s.IsMainChannel, &s.CreatedAt)
 		if err != nil {
 			return nil, err
+		}
+		if soilType != nil {
+			s.SoilType = *soilType
+		} else {
+			s.SoilType = "gravel"
+		}
+		if soilCorrection != nil {
+			s.SoilCorrectionFactor = *soilCorrection
+		} else {
+			s.SoilCorrectionFactor = 1.0
 		}
 		segments = append(segments, s)
 	}

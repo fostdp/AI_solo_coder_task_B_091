@@ -1,6 +1,7 @@
 /**
  * 坎儿井三维剖面可视化
  * 使用Three.js实现透明管道暗渠 + 粒子水流动画
+ * 引入LOD (Level of Detail) 优化渲染性能
  */
 
 class Karez3DViewer {
@@ -16,14 +17,18 @@ class Karez3DViewer {
         this.shafts = [];
         this.particleSystems = [];
         this.shaftMeshes = [];
-        this.aqueductMeshes = [];
+        this.lodGroups = [];
         this.groundMesh = null;
         
         this.showParticles = true;
         this.showShafts = true;
         this.simSpeed = 1.0;
+        this.currentLODLevel = -1;
         
         this.flowData = {};
+        
+        this.LOD_NEAR = 80;
+        this.LOD_MID = 150;
         
         this.init();
     }
@@ -41,7 +46,8 @@ class Karez3DViewer {
 
         this.renderer = new THREE.WebGLRenderer({ 
             antialias: true,
-            alpha: true 
+            alpha: true,
+            powerPreference: 'high-performance'
         });
         this.renderer.setSize(width, height);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -78,8 +84,8 @@ class Karez3DViewer {
         const sunLight = new THREE.DirectionalLight(0xfff0e0, 0.8);
         sunLight.position.set(50, 100, 30);
         sunLight.castShadow = true;
-        sunLight.shadow.mapSize.width = 2048;
-        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.mapSize.width = 1024;
+        sunLight.shadow.mapSize.height = 1024;
         sunLight.shadow.camera.near = 0.5;
         sunLight.shadow.camera.far = 500;
         sunLight.shadow.camera.left = -100;
@@ -98,7 +104,7 @@ class Karez3DViewer {
     }
 
     createGround() {
-        const groundGeometry = new THREE.PlaneGeometry(300, 200, 50, 50);
+        const groundGeometry = new THREE.PlaneGeometry(300, 200, 25, 25);
         
         const positions = groundGeometry.attributes.position;
         for (let i = 0; i < positions.count; i++) {
@@ -147,14 +153,13 @@ class Karez3DViewer {
         this.segments = defaultSegments;
 
         defaultSegments.forEach((seg, index) => {
-            this.createAqueductSegment(seg, index);
-            this.createWaterParticles(seg, index);
+            this.createAqueductLOD(seg, index);
         });
 
         this.createShafts();
     }
 
-    createAqueductSegment(segment, index) {
+    _buildPipeGeometry(segment, steps) {
         const scaleFactor = 0.5;
         const startX = segment.startX * scaleFactor;
         const startY = -segment.startY * 0.3;
@@ -172,100 +177,139 @@ class Karez3DViewer {
         const shape = new THREE.Shape();
         const hw = pipeWidth / 2;
         const hh = pipeHeight / 2;
-        shape.moveTo(-hw, -hh);
-        shape.lineTo(-hw, hh * 0.5);
-        shape.quadraticCurveTo(-hw, hh, -hw * 0.5, hh);
-        shape.lineTo(hw * 0.5, hh);
-        shape.quadraticCurveTo(hw, hh, hw, hh * 0.5);
-        shape.lineTo(hw, -hh);
-        shape.lineTo(-hw, -hh);
+
+        if (steps <= 6) {
+            shape.moveTo(-hw, -hh);
+            shape.lineTo(-hw, hh);
+            shape.lineTo(hw, hh);
+            shape.lineTo(hw, -hh);
+            shape.lineTo(-hw, -hh);
+        } else {
+            shape.moveTo(-hw, -hh);
+            shape.lineTo(-hw, hh * 0.5);
+            shape.quadraticCurveTo(-hw, hh, -hw * 0.5, hh);
+            shape.lineTo(hw * 0.5, hh);
+            shape.quadraticCurveTo(hw, hh, hw, hh * 0.5);
+            shape.lineTo(hw, -hh);
+            shape.lineTo(-hw, -hh);
+        }
 
         const extrudeSettings = {
-            steps: 50,
+            steps: steps,
             depth: length,
             bevelEnabled: false
         };
 
         const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-
-        const material = new THREE.MeshPhysicalMaterial({
-            color: 0x64b5f6,
-            transparent: true,
-            opacity: 0.25,
-            roughness: 0.1,
-            metalness: 0.1,
-            transmission: 0.6,
-            thickness: 0.5,
-            side: THREE.DoubleSide
-        });
-
-        const pipe = new THREE.Mesh(geometry, material);
-        pipe.rotation.y = -angle;
-        pipe.position.set(startX, startY, 0);
-        
-        pipe.castShadow = false;
-        pipe.receiveShadow = false;
-
-        const edgeGeometry = new THREE.EdgesGeometry(geometry);
-        const edgeMaterial = new THREE.LineBasicMaterial({
-            color: 0x4a90d9,
-            transparent: true,
-            opacity: 0.6
-        });
-        const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
-        pipe.add(edges);
-
-        pipe.userData = { 
-            segmentId: segment.id, 
-            segmentName: segment.name,
-            type: 'aqueduct'
-        };
-
-        this.scene.add(pipe);
-        this.aqueductMeshes.push(pipe);
+        return { geometry, angle, startX, startY, length, pipeWidth, pipeHeight };
     }
 
-    createWaterParticles(segment, index) {
-        const particleCount = 300;
-        const scaleFactor = 0.5;
-        const startX = segment.startX * scaleFactor;
-        const startY = -segment.startY * 0.3;
-        const endX = segment.endX * scaleFactor;
-        const endY = -segment.endY * 0.3;
+    _buildPipeMaterial(lodLevel) {
+        switch (lodLevel) {
+            case 0:
+                return new THREE.MeshPhysicalMaterial({
+                    color: 0x64b5f6,
+                    transparent: true,
+                    opacity: 0.25,
+                    roughness: 0.1,
+                    metalness: 0.1,
+                    transmission: 0.6,
+                    thickness: 0.5,
+                    side: THREE.DoubleSide
+                });
+            case 1:
+                return new THREE.MeshStandardMaterial({
+                    color: 0x64b5f6,
+                    transparent: true,
+                    opacity: 0.3,
+                    roughness: 0.3,
+                    metalness: 0.05,
+                    side: THREE.DoubleSide
+                });
+            case 2:
+            default:
+                return new THREE.MeshBasicMaterial({
+                    color: 0x64b5f6,
+                    transparent: true,
+                    opacity: 0.35,
+                    side: THREE.DoubleSide,
+                    wireframe: false
+                });
+        }
+    }
 
-        const dx = endX - startX;
-        const dy = endY - startY;
-        const length = Math.sqrt(dx * dx + dy * dy);
-        const angle = Math.atan2(dy, dx);
+    createAqueductLOD(segment, index) {
+        const pipeData = this._buildPipeGeometry(segment, 40);
 
-        const pipeWidth = segment.width * 4;
-        const pipeHeight = segment.height * 4;
+        const lodGroup = new THREE.LOD();
+        const pipeDataMid = this._buildPipeGeometry(segment, 16);
+        const pipeDataFar = this._buildPipeGeometry(segment, 4);
+
+        const nearPipe = new THREE.Mesh(pipeData.geometry, this._buildPipeMaterial(0));
+        nearPipe.rotation.y = -pipeData.angle;
+        nearPipe.position.set(pipeData.startX, pipeData.startY, 0);
+        nearPipe.userData = { segmentId: segment.id, segmentName: segment.name, type: 'aqueduct' };
+
+        const edgeGeometry = new THREE.EdgesGeometry(pipeData.geometry);
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x4a90d9, transparent: true, opacity: 0.6 });
+        const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+        nearPipe.add(edges);
+        lodGroup.addLevel(nearPipe, 0);
+
+        const midPipe = new THREE.Mesh(pipeDataMid.geometry, this._buildPipeMaterial(1));
+        midPipe.rotation.y = -pipeData.angle;
+        midPipe.position.set(pipeData.startX, pipeData.startY, 0);
+        midPipe.userData = { segmentId: segment.id, segmentName: segment.name, type: 'aqueduct' };
+        lodGroup.addLevel(midPipe, this.LOD_NEAR);
+
+        const farPipe = new THREE.Mesh(pipeDataFar.geometry, this._buildPipeMaterial(2));
+        farPipe.rotation.y = -pipeData.angle;
+        farPipe.position.set(pipeData.startX, pipeData.startY, 0);
+        farPipe.userData = { segmentId: segment.id, segmentName: segment.name, type: 'aqueduct' };
+        lodGroup.addLevel(farPipe, this.LOD_MID);
+
+        this.scene.add(lodGroup);
+        this.lodGroups.push(lodGroup);
+
+        this._createParticleLOD(segment, pipeData);
+    }
+
+    _createParticleLOD(segment, pipeData) {
+        const nearParticles = this._buildParticleSystem(segment, pipeData, 300);
+        const midParticles = this._buildParticleSystem(segment, pipeData, 120);
+
+        const particleLod = new THREE.LOD();
+        particleLod.addLevel(nearParticles, 0);
+        particleLod.addLevel(midParticles, this.LOD_NEAR);
+
+        const emptyGroup = new THREE.Group();
+        emptyGroup.visible = false;
+        particleLod.addLevel(emptyGroup, this.LOD_MID);
+
+        this.scene.add(particleLod);
+        this.particleSystems.push(particleLod);
+    }
+
+    _buildParticleSystem(segment, pipeData, count) {
+        const { length, pipeWidth, pipeHeight } = pipeData;
 
         const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const speeds = new Float32Array(particleCount);
-        const sizes = new Float32Array(particleCount);
+        const positions = new Float32Array(count * 3);
+        const speeds = new Float32Array(count);
 
-        for (let i = 0; i < particleCount; i++) {
+        for (let i = 0; i < count; i++) {
             const t = Math.random();
-            const localX = (Math.random() - 0.5) * pipeWidth * 0.7;
-            const localY = (Math.random() - 0.5) * pipeHeight * 0.6;
-            const localZ = t * length;
-
-            positions[i * 3] = localX;
-            positions[i * 3 + 1] = localY;
-            positions[i * 3 + 2] = localZ;
-
+            positions[i * 3] = (Math.random() - 0.5) * pipeWidth * 0.7;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * pipeHeight * 0.6;
+            positions[i * 3 + 2] = t * length;
             speeds[i] = 0.5 + Math.random() * 0.5;
-            sizes[i] = 0.3 + Math.random() * 0.4;
         }
 
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
         const material = new THREE.PointsMaterial({
             color: 0x4fc3f7,
-            size: 0.3,
+            size: count > 150 ? 0.3 : 0.4,
             transparent: true,
             opacity: 0.8,
             blending: THREE.AdditiveBlending,
@@ -273,9 +317,9 @@ class Karez3DViewer {
         });
 
         const particles = new THREE.Points(geometry, material);
-        particles.rotation.y = -angle;
-        particles.position.set(startX, startY, 0);
-        
+        particles.rotation.y = -pipeData.angle;
+        particles.position.set(pipeData.startX, pipeData.startY, 0);
+
         particles.userData = {
             speeds: speeds,
             length: length,
@@ -285,8 +329,7 @@ class Karez3DViewer {
             flowSpeed: 1.0
         };
 
-        this.scene.add(particles);
-        this.particleSystems.push(particles);
+        return particles;
     }
 
     createShafts() {
@@ -296,13 +339,10 @@ class Karez3DViewer {
         for (let i = 0; i < shaftCount; i++) {
             const t = i / (shaftCount - 1);
             
-            let segIndex = 0;
-            let segT = t;
-            let cumLength = 0;
             const totalLength = this.segments.reduce((sum, s) => sum + (s.endX - s.startX), 0);
             const targetDist = t * totalLength;
             
-            let accDist = 0;
+            let segIndex = 0, segT = t, accDist = 0;
             for (let j = 0; j < this.segments.length; j++) {
                 const segLen = this.segments[j].endX - this.segments[j].startX;
                 if (accDist + segLen >= targetDist) {
@@ -331,66 +371,70 @@ class Karez3DViewer {
     }
 
     createShaft(x, groundY, bottomY, depth, index) {
-        const shaftDiameter = 1.5;
-        const shaftRadius = shaftDiameter / 2;
+        const shaftRadius = 0.75;
 
-        const geometry = new THREE.CylinderGeometry(
-            shaftRadius, 
-            shaftRadius * 0.9, 
-            depth, 
-            12, 
-            1,
-            true
-        );
+        const lodGroup = new THREE.LOD();
 
-        const material = new THREE.MeshStandardMaterial({
-            color: 0x8d6e63,
-            roughness: 0.9,
-            metalness: 0.1,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.8
+        const nearGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius * 0.9, depth, 12, 1, true);
+        const nearMat = new THREE.MeshStandardMaterial({
+            color: 0x8d6e63, roughness: 0.9, metalness: 0.1,
+            side: THREE.DoubleSide, transparent: true, opacity: 0.8
         });
+        const nearShaft = new THREE.Mesh(nearGeo, nearMat);
+        nearShaft.position.set(x, groundY - depth / 2, 0);
+        nearShaft.castShadow = true;
+        nearShaft.receiveShadow = true;
+        nearShaft.userData = { shaftId: index + 1, shaftName: `竖井-${index + 1}`, type: 'shaft', depth: depth };
 
-        const shaft = new THREE.Mesh(geometry, material);
-        shaft.position.set(x, groundY - depth / 2, 0);
-        shaft.castShadow = true;
-        shaft.receiveShadow = true;
-
-        shaft.userData = {
-            shaftId: index + 1,
-            shaftName: `竖井-${index + 1}`,
-            type: 'shaft',
-            depth: depth
-        };
-
-        const topRingGeometry = new THREE.TorusGeometry(shaftRadius + 0.1, 0.15, 8, 16);
-        const topRingMaterial = new THREE.MeshStandardMaterial({
-            color: 0x5d4037,
-            roughness: 0.8,
-            metalness: 0.2
-        });
-        const topRing = new THREE.Mesh(topRingGeometry, topRingMaterial);
+        const topRingGeo = new THREE.TorusGeometry(shaftRadius + 0.1, 0.15, 8, 16);
+        const topRingMat = new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.8, metalness: 0.2 });
+        const topRing = new THREE.Mesh(topRingGeo, topRingMat);
         topRing.rotation.x = Math.PI / 2;
         topRing.position.y = depth / 2;
-        shaft.add(topRing);
+        nearShaft.add(topRing);
 
-        this.scene.add(shaft);
-        this.shaftMeshes.push(shaft);
+        lodGroup.addLevel(nearShaft, 0);
+
+        const midGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius * 0.9, depth, 6, 1, true);
+        const midMat = new THREE.MeshStandardMaterial({
+            color: 0x8d6e63, roughness: 0.9, metalness: 0.1,
+            side: THREE.DoubleSide, transparent: true, opacity: 0.6
+        });
+        const midShaft = new THREE.Mesh(midGeo, midMat);
+        midShaft.position.set(x, groundY - depth / 2, 0);
+        lodGroup.addLevel(midShaft, this.LOD_NEAR);
+
+        const farGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius, depth, 4, 1, true);
+        const farMat = new THREE.MeshBasicMaterial({
+            color: 0x8d6e63, transparent: true, opacity: 0.4, side: THREE.DoubleSide
+        });
+        const farShaft = new THREE.Mesh(farGeo, farMat);
+        farShaft.position.set(x, groundY - depth / 2, 0);
+        lodGroup.addLevel(farShaft, this.LOD_MID);
+
+        this.scene.add(lodGroup);
+        this.shaftMeshes.push(lodGroup);
     }
 
     updateParticles(delta) {
         if (!this.showParticles) return;
 
-        this.particleSystems.forEach(system => {
-            const positions = system.geometry.attributes.position.array;
-            const speeds = system.userData.speeds;
-            const length = system.userData.length;
-            const pipeWidth = system.userData.pipeWidth;
-            const pipeHeight = system.userData.pipeHeight;
-            const flowSpeed = system.userData.flowSpeed || 1.0;
+        this.particleSystems.forEach(lodGroup => {
+            const currentObj = lodGroup.currentObject;
+            if (!currentObj || !currentObj.isPoints) return;
+            if (!currentObj.visible) return;
 
-            for (let i = 0; i < speeds.length; i++) {
+            const positions = currentObj.geometry.attributes.position.array;
+            const speeds = currentObj.userData.speeds;
+            if (!speeds) return;
+
+            const length = currentObj.userData.length;
+            const pipeWidth = currentObj.userData.pipeWidth;
+            const pipeHeight = currentObj.userData.pipeHeight;
+            const flowSpeed = currentObj.userData.flowSpeed || 1.0;
+            const count = speeds.length;
+
+            for (let i = 0; i < count; i++) {
                 let z = positions[i * 3 + 2];
                 z += speeds[i] * flowSpeed * this.simSpeed * delta * 10;
 
@@ -403,17 +447,27 @@ class Karez3DViewer {
                 positions[i * 3 + 2] = z;
             }
 
-            system.geometry.attributes.position.needsUpdate = true;
+            currentObj.geometry.attributes.position.needsUpdate = true;
         });
+    }
+
+    updateLOD() {
+        this.lodGroups.forEach(lod => lod.update(this.camera));
+        this.particleSystems.forEach(lod => lod.update(this.camera));
+        this.shaftMeshes.forEach(lod => lod.update(this.camera));
     }
 
     updateFlowData(flowData) {
         this.flowData = flowData;
         
-        this.particleSystems.forEach(system => {
-            const segId = system.userData.segmentId;
-            if (flowData[segId] !== undefined) {
-                system.userData.flowSpeed = Math.max(0.1, flowData[segId] * 15);
+        this.particleSystems.forEach(lodGroup => {
+            const segId = lodGroup.children[0]?.userData?.segmentId;
+            if (segId !== undefined && flowData[segId] !== undefined) {
+                lodGroup.children.forEach(child => {
+                    if (child.userData) {
+                        child.userData.flowSpeed = Math.max(0.1, flowData[segId] * 15);
+                    }
+                });
             }
         });
     }
@@ -474,12 +528,18 @@ class Karez3DViewer {
 
     toggleParticles(show) {
         this.showParticles = show;
-        this.particleSystems.forEach(p => p.visible = show);
+        this.particleSystems.forEach(lod => {
+            lod.children.forEach(child => {
+                if (child.isPoints) child.visible = show;
+            });
+        });
     }
 
     toggleShafts(show) {
         this.showShafts = show;
-        this.shaftMeshes.forEach(s => s.visible = show);
+        this.shaftMeshes.forEach(lod => {
+            lod.visible = show;
+        });
     }
 
     setSimSpeed(speed) {
@@ -487,16 +547,21 @@ class Karez3DViewer {
     }
 
     highlightSegment(segmentId) {
-        this.aqueductMeshes.forEach(mesh => {
-            if (mesh.userData.segmentId === segmentId) {
-                mesh.material.opacity = 0.5;
-                mesh.material.emissive = new THREE.Color(0x4fc3f7);
-                mesh.material.emissiveIntensity = 0.3;
-            } else {
-                mesh.material.opacity = 0.25;
-                mesh.material.emissive = new THREE.Color(0x000000);
-                mesh.material.emissiveIntensity = 0;
-            }
+        this.lodGroups.forEach(lod => {
+            lod.children.forEach(mesh => {
+                if (mesh.userData.segmentId === segmentId) {
+                    mesh.material.opacity = 0.5;
+                    if (mesh.material.emissive) {
+                        mesh.material.emissive = new THREE.Color(0x4fc3f7);
+                        mesh.material.emissiveIntensity = 0.3;
+                    }
+                } else {
+                    if (mesh.material.emissive) {
+                        mesh.material.emissive = new THREE.Color(0x000000);
+                        mesh.material.emissiveIntensity = 0;
+                    }
+                }
+            });
         });
     }
 
@@ -516,17 +581,18 @@ class Karez3DViewer {
         const delta = this.clock.getDelta();
 
         this.updateParticles(delta);
+        this.updateLOD();
         this.controls.update();
 
         this.renderer.render(this.scene, this.camera);
     }
 
     loadFromData(segments, shafts) {
-        this.aqueductMeshes.forEach(m => this.scene.remove(m));
-        this.particleSystems.forEach(p => this.scene.remove(p));
-        this.shaftMeshes.forEach(s => this.scene.remove(s));
+        this.lodGroups.forEach(lod => this.scene.remove(lod));
+        this.particleSystems.forEach(lod => this.scene.remove(lod));
+        this.shaftMeshes.forEach(lod => this.scene.remove(lod));
         
-        this.aqueductMeshes = [];
+        this.lodGroups = [];
         this.particleSystems = [];
         this.shaftMeshes = [];
 
@@ -544,8 +610,7 @@ class Karez3DViewer {
                 height: seg.height,
                 length: seg.length
             };
-            this.createAqueductSegment(segData, index);
-            this.createWaterParticles(segData, index);
+            this.createAqueductLOD(segData, index);
         });
 
         if (shafts && shafts.length > 0) {
