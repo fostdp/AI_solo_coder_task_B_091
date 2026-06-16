@@ -6,6 +6,7 @@ import (
 	"karez-system/config"
 	"karez-system/db"
 	"karez-system/dtu_receiver"
+	"karez-system/groundwater_simulator"
 	"karez-system/handlers"
 	"karez-system/hydraulic_sim"
 	"karez-system/metrics"
@@ -68,7 +69,10 @@ func main() {
 	alarmManager := alarmmqtt.New(cfg, database, mqttClient, alarmRequestChan)
 	alarmManager.Start(ctx)
 
-	h := handlers.New(database, dtuReceiver, hydraulicSim, waterAllocator, alarmManager)
+	groundwaterSim := groundwatersimulator.New()
+	groundwaterSim.Start(ctx)
+
+	h := handlers.New(database, dtuReceiver, hydraulicSim, waterAllocator, alarmManager, groundwaterSim)
 
 	go func() {
 		log.Printf("Pprof server starting on port 6060")
@@ -127,6 +131,8 @@ func main() {
 
 		api.GET("/water-level/scenarios", h.GetWaterLevelScenarios)
 		api.POST("/water-level/simulate", h.SimulateWaterLevelImpact)
+		api.POST("/water-level/simulate/async", h.SubmitWaterLevelSimulation)
+		api.GET("/water-level/simulate/:task_id", h.GetSimulationTaskStatus)
 
 		api.GET("/virtual-dig/terrain", h.GetDefaultTerrain)
 		api.GET("/virtual-dig/guide", h.GetDigGuide)

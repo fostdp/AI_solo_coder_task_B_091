@@ -4,11 +4,12 @@ import (
 	"karez-system/alarm_mqtt"
 	"karez-system/db"
 	dtureceiver "karez-system/dtu_receiver"
+	"karez-system/era_comparator"
+	"karez-system/evolution_analyzer"
+	groundwatersimulator "karez-system/groundwater_simulator"
 	hydraulicsim "karez-system/hydraulic_sim"
-	karezculture "karez-system/karez_culture"
 	"karez-system/models"
-	waterlevel "karez-system/water_level"
-	virtualdig "karez-system/virtual_dig"
+	vrkarezbuilder "karez-system/vr_karez_builder"
 	wateralloc "karez-system/water_allocator"
 	"net/http"
 	"strconv"
@@ -18,30 +19,33 @@ import (
 )
 
 type Handler struct {
-	database        *db.Database
-	dtuReceiver     *dtureceiver.DtuReceiver
-	hydraulicSim    *hydraulicsim.HydraulicSimulator
-	waterAllocator  *wateralloc.WaterAllocator
-	alarmManager    *alarmmqtt.AlarmManager
-	cultureService  *karezculture.CultureService
-	waterLevelSim   *waterlevel.WaterLevelSimulator
-	virtualDigService *virtualdig.VirtualDigService
+	database         *db.Database
+	dtuReceiver      *dtureceiver.DtuReceiver
+	hydraulicSim     *hydraulicsim.HydraulicSimulator
+	waterAllocator   *wateralloc.WaterAllocator
+	alarmManager     *alarmmqtt.AlarmManager
+	evolutionAnalyzer *evolutionanalyzer.EvolutionAnalyzer
+	eraComparator    *eracomparator.EraComparator
+	groundwaterSim   *groundwatersimulator.GroundwaterSimulator
+	vrKarezBuilder   *vrkarezbuilder.VrKarezBuilder
 }
 
 func New(database *db.Database,
 	dtuReceiver *dtureceiver.DtuReceiver,
 	hydraulicSim *hydraulicsim.HydraulicSimulator,
 	waterAllocator *wateralloc.WaterAllocator,
-	alarmManager *alarmmqtt.AlarmManager) *Handler {
+	alarmManager *alarmmqtt.AlarmManager,
+	groundwaterSim *groundwatersimulator.GroundwaterSimulator) *Handler {
 	return &Handler{
-		database:        database,
-		dtuReceiver:     dtuReceiver,
-		hydraulicSim:    hydraulicSim,
-		waterAllocator:  waterAllocator,
-		alarmManager:    alarmManager,
-		cultureService:  karezculture.New(),
-		waterLevelSim:   waterlevel.New(),
-		virtualDigService: virtualdig.New(),
+		database:          database,
+		dtuReceiver:       dtuReceiver,
+		hydraulicSim:      hydraulicSim,
+		waterAllocator:    waterAllocator,
+		alarmManager:      alarmManager,
+		evolutionAnalyzer: evolutionanalyzer.New(),
+		eraComparator:     eracomparator.New(),
+		groundwaterSim:    groundwaterSim,
+		vrKarezBuilder:    vrkarezbuilder.New(),
 	}
 }
 
@@ -443,17 +447,17 @@ func (h *Handler) GetDashboardData(c *gin.Context) {
 }
 
 func (h *Handler) GetTechnologyEvolution(c *gin.Context) {
-	analysis := h.cultureService.GetTechnologyEvolution()
+	analysis := h.evolutionAnalyzer.Analyze()
 	c.JSON(http.StatusOK, analysis)
 }
 
 func (h *Handler) GetCrossEraComparison(c *gin.Context) {
-	comparison := h.cultureService.GetCrossEraComparison()
+	comparison := h.eraComparator.Compare()
 	c.JSON(http.StatusOK, comparison)
 }
 
 func (h *Handler) GetWaterLevelScenarios(c *gin.Context) {
-	scenarios := h.waterLevelSim.GetDefaultScenarios()
+	scenarios := h.groundwaterSim.GetDefaultScenarios()
 	c.JSON(http.StatusOK, scenarios)
 }
 
@@ -464,7 +468,7 @@ func (h *Handler) SimulateWaterLevelImpact(c *gin.Context) {
 		return
 	}
 
-	results := h.waterLevelSim.SimulateWaterLevelImpact(req)
+	results := h.groundwaterSim.Simulate(req)
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "success",
 		"results":  results,
@@ -472,8 +476,33 @@ func (h *Handler) SimulateWaterLevelImpact(c *gin.Context) {
 	})
 }
 
+func (h *Handler) SubmitWaterLevelSimulation(c *gin.Context) {
+	var req models.WaterLevelSimulationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	taskID := h.groundwaterSim.SubmitAsync(req)
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "accepted",
+		"task_id": taskID,
+		"message": "Simulation task submitted",
+	})
+}
+
+func (h *Handler) GetSimulationTaskStatus(c *gin.Context) {
+	taskID := c.Param("task_id")
+	task, exists := h.groundwaterSim.GetTaskStatus(taskID)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	c.JSON(http.StatusOK, task)
+}
+
 func (h *Handler) GetDefaultTerrain(c *gin.Context) {
-	terrain := h.virtualDigService.GetDefaultTerrain()
+	terrain := h.vrKarezBuilder.GetDefaultTerrain()
 	c.JSON(http.StatusOK, terrain)
 }
 
@@ -484,7 +513,7 @@ func (h *Handler) SaveVirtualDigProject(c *gin.Context) {
 		return
 	}
 
-	project, err := h.virtualDigService.SaveProject(req)
+	project, err := h.vrKarezBuilder.SaveProject(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -503,7 +532,7 @@ func (h *Handler) SimulateVirtualDig(c *gin.Context) {
 		return
 	}
 
-	project, err := h.virtualDigService.SimulateDesign(req)
+	project, err := h.vrKarezBuilder.SimulateDesign(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -517,7 +546,7 @@ func (h *Handler) SimulateVirtualDig(c *gin.Context) {
 
 func (h *Handler) GetVirtualDigProject(c *gin.Context) {
 	id := c.Param("id")
-	project, exists := h.virtualDigService.GetProject(id)
+	project, exists := h.vrKarezBuilder.GetProject(id)
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
 		return
@@ -526,7 +555,7 @@ func (h *Handler) GetVirtualDigProject(c *gin.Context) {
 }
 
 func (h *Handler) ListVirtualDigProjects(c *gin.Context) {
-	projects := h.virtualDigService.ListProjects()
+	projects := h.vrKarezBuilder.ListProjects()
 	c.JSON(http.StatusOK, gin.H{
 		"projects": projects,
 		"count":    len(projects),
@@ -535,7 +564,7 @@ func (h *Handler) ListVirtualDigProjects(c *gin.Context) {
 
 func (h *Handler) DeleteVirtualDigProject(c *gin.Context) {
 	id := c.Param("id")
-	if ok := h.virtualDigService.DeleteProject(id); !ok {
+	if ok := h.vrKarezBuilder.DeleteProject(id); !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
 		return
 	}
@@ -543,12 +572,12 @@ func (h *Handler) DeleteVirtualDigProject(c *gin.Context) {
 }
 
 func (h *Handler) GetDigGuide(c *gin.Context) {
-	guide := h.virtualDigService.GetDigGuide()
+	guide := h.vrKarezBuilder.GetDigGuide()
 	c.JSON(http.StatusOK, guide)
 }
 
 func (h *Handler) GetDesignTemplates(c *gin.Context) {
-	templates := h.virtualDigService.GetDesignTemplates()
+	templates := h.vrKarezBuilder.GetDesignTemplates()
 	c.JSON(http.StatusOK, gin.H{
 		"templates": templates,
 		"count":     len(templates),
@@ -556,7 +585,7 @@ func (h *Handler) GetDesignTemplates(c *gin.Context) {
 }
 
 func (h *Handler) GetQuickTips(c *gin.Context) {
-	tips := h.virtualDigService.GetQuickTips()
+	tips := h.vrKarezBuilder.GetQuickTips()
 	c.JSON(http.StatusOK, gin.H{
 		"tips":  tips,
 		"count": len(tips),
