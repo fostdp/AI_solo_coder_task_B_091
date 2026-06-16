@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"karez-system/config"
+	"karez-system/metrics"
 	"log"
 	"time"
 
@@ -78,6 +79,7 @@ func (m *Client) Close() {
 func (m *Client) SubscribeSensorData(handler SensorDataHandler) error {
 	topic := fmt.Sprintf("%s/sensor/+/+", m.topicPrefix)
 	token := m.client.Subscribe(topic, 1, func(client mqtt.Client, msg mqtt.Message) {
+		metrics.ObserveMQTTReceive()
 		var sensorMsg SensorMessage
 		if err := json.Unmarshal(msg.Payload(), &sensorMsg); err != nil {
 			log.Printf("Failed to parse sensor message: %v", err)
@@ -108,6 +110,7 @@ func (m *Client) PublishAlert(alert *AlertMessage) error {
 	if token.Error() != nil {
 		return fmt.Errorf("failed to publish alert: %w", token.Error())
 	}
+	metrics.ObserveMQTTPublish()
 	log.Printf("Alert published to %s: %s - %s", topic, alert.AlertType, alert.Message)
 	return nil
 }
@@ -120,5 +123,8 @@ func (m *Client) PublishAllocation(karezID int, data interface{}) error {
 	}
 	token := m.client.Publish(topic, 1, false, payload)
 	token.Wait()
+	if token.Error() == nil {
+		metrics.ObserveMQTTPublish()
+	}
 	return token.Error()
 }

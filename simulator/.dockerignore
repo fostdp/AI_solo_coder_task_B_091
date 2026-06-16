@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+dist/
+build/
+*.whl
+
+# Virtualenv
+venv/
+env/
+ENV/
+.venv/
+
+# Docker
+Dockerfile
+.dockerignore
+requirements.txt
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

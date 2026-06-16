@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"karez-system/config"
 	"karez-system/db"
+	"karez-system/metrics"
 	"karez-system/models"
 	"log"
 	"math"
@@ -82,6 +83,8 @@ func (wa *WaterAllocator) run(ctx context.Context) {
 }
 
 func (wa *WaterAllocator) OptimizeAllocation(ctx context.Context, karezID int, totalAvailableFlow float64) (*AllocationResponse, error) {
+	metrics.ObserveAllocationRun()
+
 	oases, err := wa.database.GetOases(ctx, karezID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get oases: %w", err)

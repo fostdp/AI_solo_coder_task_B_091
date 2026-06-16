@@ -1,0 +1,62 @@
+groups:
+  - name: karez-system.rules
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(karez_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(karez_http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高错误率告警"
+          description: "HTTP错误率超过5% (当前值: {{ $value | humanizePercentage }})"
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, sum(rate(karez_http_request_duration_seconds_bucket[5m])) by (le)) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高延迟告警"
+          description: "P95 HTTP请求延迟超过1秒 (当前值: {{ $value }}s)"
+
+      - alert: HighSensorDataInvalidRate
+        expr: |
+          sum(rate(karez_sensor_data_invalid_total[5m]))
+          /
+          sum(rate(karez_sensor_data_received_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "传感器数据异常率高"
+          description: "无效传感器数据比例超过10% (当前值: {{ $value | humanizePercentage }})"
+
+      - alert: ChannelBackpressureHigh
+        expr: karez_channel_backpressure > 0.8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Channel 拥塞告警"
+          description: "Channel {{ $labels.channel_name }} 拥塞度超过80% (当前值: {{ $value | humanizePercentage }})"
+
+      - alert: HighAlertFrequency
+        expr: sum(rate(karez_alerts_triggered_total[10m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "告警频率过高"
+          description: "10分钟内告警触发超过10次 (当前值: {{ $value }})"
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务宕机告警"
+          description: "{{ $labels.job }} 服务已宕机超过1分钟"

@@ -8,10 +8,13 @@ import (
 	"karez-system/dtu_receiver"
 	"karez-system/handlers"
 	"karez-system/hydraulic_sim"
+	"karez-system/metrics"
 	"karez-system/models"
 	"karez-system/mqtt"
 	"karez-system/water_allocator"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -67,8 +70,16 @@ func main() {
 
 	h := handlers.New(database, dtuReceiver, hydraulicSim, waterAllocator, alarmManager)
 
+	go func() {
+		log.Printf("Pprof server starting on port 6060")
+		if err := http.ListenAndServe(":6060", nil); err != nil {
+			log.Printf("Pprof server failed: %v", err)
+		}
+	}()
+
 	r := gin.Default()
 
+	r.Use(metrics.PrometheusMiddleware())
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -77,6 +88,16 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "ok",
+			"timestamp": time.Now().UTC(),
+			"version":   "1.0.0",
+		})
+	})
+
+	r.GET("/metrics", gin.WrapH(metrics.PrometheusHandler()))
 
 	api := r.Group("/api")
 	{
@@ -103,6 +124,8 @@ func main() {
 	}
 
 	go startPeriodicTasks(cfg, simRequestChan, alarmRequestChan)
+	go startMetricsCollector(sensorDataChan, simRequestChan, simResultChan,
+		allocRequestChan, allocResultChan, alarmRequestChan)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -147,5 +170,26 @@ func startPeriodicTasks(cfg *config.Config,
 				log.Println("Periodic alarm: channel full, skipping")
 			}
 		}
+	}
+}
+
+func startMetricsCollector(
+	sensorDataChan chan *models.SensorData,
+	simRequestChan chan hydraulicsim.SimRequest,
+	simResultChan chan hydraulicsim.SimResult,
+	allocRequestChan chan wateralloc.AllocationRequest,
+	allocResultChan chan wateralloc.AllocationResponse,
+	alarmRequestChan chan alarmmqtt.AlarmCheckRequest,
+) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		metrics.SetChannelBackpressure("sensor_data", float64(len(sensorDataChan))/float64(cap(sensorDataChan)))
+		metrics.SetChannelBackpressure("sim_request", float64(len(simRequestChan))/float64(cap(simRequestChan)))
+		metrics.SetChannelBackpressure("sim_result", float64(len(simResultChan))/float64(cap(simResultChan)))
+		metrics.SetChannelBackpressure("alloc_request", float64(len(allocRequestChan))/float64(cap(allocRequestChan)))
+		metrics.SetChannelBackpressure("alloc_result", float64(len(allocResultChan))/float64(cap(allocResultChan)))
+		metrics.SetChannelBackpressure("alarm_request", float64(len(alarmRequestChan))/float64(cap(alarmRequestChan)))
 	}
 }

@@ -1,323 +1,305 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-坎儿井传感器模拟器
-模拟每条暗渠每1小时通过传感器上报流量、水位、竖井水位、蒸发量等数据
-支持通过HTTP API和MQTT两种方式上报
-"""
-
 import json
 import time
 import random
-import math
-import requests
-import paho.mqtt.client as mqtt
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+import argparse
+import os
+from datetime import datetime, timezone
+from typing import Dict, Any
+
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    print("Error: paho-mqtt is required. Install with: pip install paho-mqtt")
+    exit(1)
+
+SOIL_TYPES = {
+    "gravel": {"name": "砾石", "permeability": 1.0, "seepage_factor": 0.02},
+    "sandy_loam": {"name": "砂壤土", "permeability": 0.4, "seepage_factor": 0.05},
+    "clay": {"name": "粘土", "permeability": 0.02, "seepage_factor": 0.005},
+    "loess": {"name": "黄土", "permeability": 0.15, "seepage_factor": 0.015},
+    "sand": {"name": "砂土", "permeability": 0.8, "seepage_factor": 0.03},
+    "silt": {"name": "粉土", "permeability": 0.1, "seepage_factor": 0.01},
+    "rock": {"name": "岩石", "permeability": 0.001, "seepage_factor": 0.001},
+}
+
+CLIMATE_SCENARIOS = {
+    "normal": {
+        "name": "正常气候",
+        "temp_range": (15, 35),
+        "evaporation_range": (0.002, 0.008),
+        "flow_base": 1.5,
+        "flow_variance": 0.3,
+        "water_level_base": 1.8,
+        "water_level_variance": 0.2,
+        "rain_factor": 1.0,
+    },
+    "drought": {
+        "name": "极端干旱",
+        "temp_range": (25, 45),
+        "evaporation_range": (0.008, 0.02),
+        "flow_base": 0.3,
+        "flow_variance": 0.1,
+        "water_level_base": 0.5,
+        "water_level_variance": 0.1,
+        "rain_factor": 0.1,
+    },
+    "flood": {
+        "name": "暴雨洪水",
+        "temp_range": (10, 25),
+        "evaporation_range": (0.001, 0.003),
+        "flow_base": 4.0,
+        "flow_variance": 1.5,
+        "water_level_base": 3.5,
+        "water_level_variance": 0.8,
+        "rain_factor": 5.0,
+    },
+    "freeze": {
+        "name": "冬季冰冻",
+        "temp_range": (-15, 5),
+        "evaporation_range": (0.0005, 0.001),
+        "flow_base": 0.8,
+        "flow_variance": 0.2,
+        "water_level_base": 2.0,
+        "water_level_variance": 0.15,
+        "rain_factor": 0.3,
+    },
+}
+
 
 class KarezSensorSimulator:
-    def __init__(self, 
-                 karez_id: int = 1,
-                 api_base_url: str = "http://localhost:8080/api",
-                 mqtt_broker: Optional[str] = None,
-                 mqtt_port: int = 1883,
-                 mqtt_topic_prefix: str = "karez",
-                 use_mqtt: bool = False,
-                 interval_seconds: int = 3600):
-        
-        self.karez_id = karez_id
-        self.api_base_url = api_base_url
-        self.mqtt_broker = mqtt_broker
-        self.mqtt_port = mqtt_port
-        self.mqtt_topic_prefix = mqtt_topic_prefix
-        self.use_mqtt = use_mqtt
-        self.interval_seconds = interval_seconds
-        
-        self.segments = []
-        self.shafts = []
-        self.branches = []
-        
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
         self.mqtt_client = None
-        
-        self.base_flow = 0.08
-        self.current_flow = self.base_flow
-        
-        self.load_karez_config()
-        
-        if use_mqtt and mqtt_broker:
-            self.setup_mqtt()
-    
-    def load_karez_config(self):
-        """加载坎儿井配置"""
-        try:
-            resp = requests.get(f"{self.api_base_url}/karez/{self.karez_id}/segments", timeout=5)
-            if resp.status_code == 200:
-                self.segments = resp.json()
-            
-            resp = requests.get(f"{self.api_base_url}/karez/{self.karez_id}/shafts", timeout=5)
-            if resp.status_code == 200:
-                self.shafts = resp.json()
-            
-            resp = requests.get(f"{self.api_base_url}/karez/{self.karez_id}/branches", timeout=5)
-            if resp.status_code == 200:
-                self.branches = resp.json()
-        except Exception as e:
-            print(f"Warning: Failed to load karez config from API: {e}")
-            print("Using default configuration...")
-            self._use_default_config()
-    
-    def _use_default_config(self):
-        """使用默认配置"""
-        self.segments = [
-            {"id": 1, "segment_name": "首部暗渠段", "segment_order": 1, "length": 800, "width": 0.8, "height": 1.2, "slope": 0.00625},
-            {"id": 2, "segment_name": "中部暗渠段", "segment_order": 2, "length": 1800, "width": 0.8, "height": 1.2, "slope": 0.00556},
-            {"id": 3, "segment_name": "尾部暗渠段", "segment_order": 3, "length": 1600, "width": 0.8, "height": 1.2, "slope": 0.00938},
-            {"id": 4, "segment_name": "龙口段", "segment_order": 4, "length": 1000, "width": 1.0, "height": 1.5, "slope": 0.06},
-        ]
-        self.shafts = [
-            {"id": i, "shaft_name": f"竖井-{i}", "shaft_order": i, "shaft_depth": 120 + i*2, "diameter": 0.8}
-            for i in range(1, 21)
-        ]
-        self.branches = [
-            {"id": 1, "branch_name": "东支渠", "max_flow": 0.08},
-            {"id": 2, "branch_name": "西支渠", "max_flow": 0.08},
-            {"id": 3, "branch_name": "南支渠", "max_flow": 0.05},
-        ]
-    
-    def setup_mqtt(self):
-        """设置MQTT客户端"""
-        try:
-            self.mqtt_client = mqtt.Client(client_id=f"karez_simulator_{self.karez_id}")
-            self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port, 60)
-            self.mqtt_client.loop_start()
-            print(f"MQTT connected to {self.mqtt_broker}:{self.mqtt_port}")
-        except Exception as e:
-            print(f"Warning: Failed to connect MQTT: {e}")
-            self.use_mqtt = False
-    
-    def generate_sensor_data(self, segment_id: int, sensor_type: str, current_time: datetime) -> Dict:
-        """生成传感器数据"""
-        hour = current_time.hour
-        
-        day_factor = 1.0 + 0.1 * math.sin(hour * math.pi / 12 - math.pi/2)
-        
-        random_noise = random.gauss(0, 0.02)
-        
-        if sensor_type == "flow":
-            flow = self.base_flow * day_factor * (1 + random_noise)
-            flow = max(0.01, min(0.15, flow))
-            
-            seg = next((s for s in self.segments if s["id"] == segment_id), None)
-            if seg and seg.get("segment_order", 0) > 1:
-                loss_factor = 0.98 + random.uniform(-0.01, 0.01)
-                flow *= loss_factor
-            
-            return {
-                "karez_id": self.karez_id,
-                "segment_id": segment_id,
-                "sensor_type": "flow",
-                "sensor_id": f"flow_seg_{segment_id}",
-                "flow_rate": round(flow, 6),
-                "velocity": round(flow / 0.96, 6),
-                "time": current_time.isoformat()
-            }
-        
-        elif sensor_type == "water_level":
-            water_depth = 0.5 + 0.2 * math.sin(hour * math.pi / 12) + random.uniform(-0.05, 0.05)
-            water_depth = max(0.2, min(1.0, water_depth))
-            
-            return {
-                "karez_id": self.karez_id,
-                "segment_id": segment_id,
-                "sensor_type": "water_level",
-                "sensor_id": f"level_seg_{segment_id}",
-                "water_level": round(water_depth, 4),
-                "time": current_time.isoformat()
-            }
-        
-        elif sensor_type == "evaporation":
-            base_evap = 2.0
-            temp_factor = 1.0 + 0.5 * math.sin(hour * math.pi / 12 - math.pi/2)
-            evaporation = base_evap * temp_factor * (1 + random.uniform(-0.1, 0.1))
-            
-            return {
-                "karez_id": self.karez_id,
-                "segment_id": segment_id,
-                "sensor_type": "evaporation",
-                "sensor_id": f"evap_seg_{segment_id}",
-                "evaporation": round(evaporation, 4),
-                "temperature": round(25 + 10 * math.sin(hour * math.pi / 12 - math.pi/2), 2),
-                "time": current_time.isoformat()
-            }
-        
-        elif sensor_type == "turbidity":
-            turbidity = 5.0 + 3.0 * random.random()
-            return {
-                "karez_id": self.karez_id,
-                "segment_id": segment_id,
-                "sensor_type": "turbidity",
-                "sensor_id": f"turb_seg_{segment_id}",
-                "turbidity": round(turbidity, 2),
-                "time": current_time.isoformat()
-            }
-        
-        return {}
-    
-    def generate_shaft_data(self, shaft_id: int, current_time: datetime) -> Dict:
-        """生成竖井传感器数据"""
-        hour = current_time.hour
-        
-        water_level = 80 + 10 * math.sin(hour * math.pi / 12) + random.uniform(-2, 2)
-        
-        return {
-            "karez_id": self.karez_id,
-            "shaft_id": shaft_id,
-            "sensor_type": "shaft_level",
-            "sensor_id": f"shaft_level_{shaft_id}",
-            "shaft_water_level": round(water_level, 3),
-            "time": current_time.isoformat()
-        }
-    
-    def send_data_http(self, data: Dict) -> bool:
-        """通过HTTP API发送数据"""
-        try:
-            resp = requests.post(f"{self.api_base_url}/sensor", json=data, timeout=5)
-            if resp.status_code == 200:
-                return True
-            else:
-                print(f"HTTP error: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"HTTP send failed: {e}")
-            return False
-    
-    def send_data_mqtt(self, data: Dict) -> bool:
-        """通过MQTT发送数据"""
-        if not self.mqtt_client:
-            return False
-        
-        try:
-            topic = f"{self.mqtt_topic_prefix}/sensor/{data['sensor_type']}/{data['sensor_id']}"
-            payload = json.dumps(data)
-            self.mqtt_client.publish(topic, payload, qos=1)
-            return True
-        except Exception as e:
-            print(f"MQTT send failed: {e}")
-            return False
-    
-    def send_data(self, data: Dict) -> bool:
-        """发送数据（根据配置选择方式）"""
-        if self.use_mqtt:
-            return self.send_data_mqtt(data)
+        self.karez_id = config.get("karez_id", 1)
+        self.segment_count = config.get("segment_count", 10)
+        self.shaft_count = config.get("shaft_count", 20)
+        self.interval = config.get("interval", 5)
+        self.soil_type = config.get("soil_type", "sandy_loam")
+        self.climate_scenario = config.get("climate_scenario", "normal")
+        self.anomaly_prob = config.get("anomaly_prob", 0.05)
+        self.sedimentation_level = config.get("sedimentation_level", 0.0)
+
+        if self.soil_type not in SOIL_TYPES:
+            raise ValueError(f"Unknown soil type: {self.soil_type}. Available: {list(SOIL_TYPES.keys())}")
+        if self.climate_scenario not in CLIMATE_SCENARIOS:
+            raise ValueError(f"Unknown climate: {self.climate_scenario}. Available: {list(CLIMATE_SCENARIOS.keys())}")
+
+        self.soil = SOIL_TYPES[self.soil_type]
+        self.climate = CLIMATE_SCENARIOS[self.climate_scenario]
+        self.message_count = 0
+
+    def connect_mqtt(self):
+        broker = self.config.get("mqtt_broker", "localhost")
+        port = self.config.get("mqtt_port", 1883)
+        client_id = f"karez-sim-{self.karez_id}-{int(time.time())}"
+
+        self.mqtt_client = mqtt.Client(client_id=client_id)
+        if self.config.get("mqtt_username"):
+            self.mqtt_client.username_pw_set(
+                self.config["mqtt_username"],
+                self.config.get("mqtt_password")
+            )
+
+        self.mqtt_client.on_connect = self._on_connect
+        self.mqtt_client.connect(broker, port, 60)
+        self.mqtt_client.loop_start()
+        time.sleep(1)
+
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            print(f"Connected to MQTT broker at {self.config.get('mqtt_broker')}:{self.config.get('mqtt_port')}")
         else:
-            return self.send_data_http(data)
-    
-    def run_cycle(self, current_time: Optional[datetime] = None):
-        """运行一个模拟周期"""
-        if current_time is None:
-            current_time = datetime.now()
-        
-        print(f"\n[{current_time.isoformat()}] Starting sensor simulation cycle...")
-        
-        data_count = 0
-        
-        for seg in self.segments:
-            seg_id = seg["id"]
-            
-            for sensor_type in ["flow", "water_level", "evaporation", "turbidity"]:
-                data = self.generate_sensor_data(seg_id, sensor_type, current_time)
-                if data:
-                    if self.send_data(data):
-                        data_count += 1
-                    else:
-                        print(f"  Failed to send {sensor_type} data for segment {seg_id}")
-        
-        for shaft in self.shafts[:10]:
-            shaft_id = shaft["id"]
-            data = self.generate_shaft_data(shaft_id, current_time)
-            if data:
-                if self.send_data(data):
-                    data_count += 1
-                else:
-                    print(f"  Failed to send shaft data for shaft {shaft_id}")
-        
-        self.base_flow += random.uniform(-0.001, 0.001)
-        self.base_flow = max(0.05, min(0.12, self.base_flow))
-        
-        print(f"  Sent {data_count} sensor readings")
-        return data_count
-    
-    def run_continuous(self):
-        """持续运行模拟器"""
-        print(f"Starting continuous karez sensor simulator for karez #{self.karez_id}")
-        print(f"  Mode: {'MQTT' if self.use_mqtt else 'HTTP'}")
-        print(f"  Interval: {self.interval_seconds} seconds")
-        print(f"  API URL: {self.api_base_url}")
-        if self.use_mqtt:
-            print(f"  MQTT Broker: {self.mqtt_broker}:{self.mqtt_port}")
-        print("Press Ctrl+C to stop\n")
-        
+            print(f"MQTT connection failed with code {rc}")
+
+    def disconnect(self):
+        if self.mqtt_client:
+            self.mqtt_client.loop_stop()
+            self.mqtt_client.disconnect()
+
+    def _generate_value(self, base: float, variance: float) -> float:
+        value = base + random.uniform(-variance, variance)
+        if random.random() < self.anomaly_prob:
+            anomaly_factor = random.choice([0.2, 0.3, 1.8, 2.0, 2.5])
+            value *= anomaly_factor
+        return max(0, value)
+
+    def _generate_temperature(self) -> float:
+        t_min, t_max = self.climate["temp_range"]
+        temp = random.uniform(t_min, t_max)
+        return round(temp, 1)
+
+    def _generate_evaporation(self, temperature: float) -> float:
+        e_min, e_max = self.climate["evaporation_range"]
+        base_evap = random.uniform(e_min, e_max)
+        temp_factor = 1.0 + (temperature - 20) * 0.02
+        soil_factor = 1.0 - self.soil["seepage_factor"]
+        return round(base_evap * temp_factor * soil_factor * self.climate["rain_factor"], 6)
+
+    def _generate_sensor_data(self, sensor_type: str, segment_id: int = None, shaft_id: int = None) -> Dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        temp = self._generate_temperature()
+        evap = self._generate_evaporation(temp)
+
+        data = {
+            "time": now.isoformat(),
+            "karez_id": self.karez_id,
+            "sensor_type": sensor_type,
+            "sensor_id": f"{sensor_type}_{segment_id or shaft_id or 1:03d}",
+            "temperature": temp,
+            "evaporation": evap,
+            "soil_type": self.soil_type,
+            "climate_scenario": self.climate_scenario,
+        }
+
+        if segment_id is not None:
+            data["segment_id"] = segment_id
+            sedimentation_effect = 1.0 - self.sedimentation_level * 0.7
+
+            if sensor_type == "flow":
+                flow = self._generate_value(
+                    self.climate["flow_base"] * sedimentation_effect,
+                    self.climate["flow_variance"]
+                )
+                data["flow_rate"] = round(flow, 4)
+                data["velocity"] = round(flow / 2.5 + random.uniform(-0.1, 0.1), 3)
+                data["turbidity"] = round(random.uniform(5, 50) + self.sedimentation_level * 100, 1)
+
+            elif sensor_type == "water_level":
+                wl = self._generate_value(
+                    self.climate["water_level_base"],
+                    self.climate["water_level_variance"]
+                )
+                data["water_level"] = round(wl, 3)
+
+        if shaft_id is not None:
+            data["shaft_id"] = shaft_id
+            if sensor_type == "shaft_water_level":
+                base_wl = self.climate["water_level_base"] * 0.9
+                wl = self._generate_value(base_wl, 0.15)
+                data["shaft_water_level"] = round(wl, 3)
+
+        return data
+
+    def publish_data(self, topic: str, data: Dict[str, Any]):
+        if self.mqtt_client:
+            payload = json.dumps(data, ensure_ascii=False)
+            self.mqtt_client.publish(topic, payload, qos=1)
+            self.message_count += 1
+            if self.message_count % 100 == 0:
+                print(f"Published {self.message_count} messages...")
+
+    def run_once(self):
+        topic_prefix = self.config.get("mqtt_topic_prefix", "karez")
+
+        for seg_id in range(1, self.segment_count + 1):
+            flow_data = self._generate_sensor_data("flow", segment_id=seg_id)
+            self.publish_data(f"{topic_prefix}/sensor/flow/{seg_id}", flow_data)
+
+            wl_data = self._generate_sensor_data("water_level", segment_id=seg_id)
+            self.publish_data(f"{topic_prefix}/sensor/water_level/{seg_id}", wl_data)
+
+        for shaft_id in range(1, self.shaft_count + 1):
+            swl_data = self._generate_sensor_data("shaft_water_level", shaft_id=shaft_id)
+            self.publish_data(f"{topic_prefix}/sensor/shaft_water_level/{shaft_id}", swl_data)
+
+    def run(self, duration: int = None):
+        print(f"\n{'='*60}")
+        print(f"坎儿井传感器模拟器启动")
+        print(f"{'='*60}")
+        print(f"坎儿井ID: {self.karez_id}")
+        print(f"土壤类型: {self.soil['name']} ({self.soil_type})")
+        print(f"  渗透系数: {self.soil['permeability']}")
+        print(f"  渗流因子: {self.soil['seepage_factor']}")
+        print(f"气候场景: {self.climate['name']} ({self.climate_scenario})")
+        print(f"  温度范围: {self.climate['temp_range']}℃")
+        print(f"  基础流量: {self.climate['flow_base']} m³/s")
+        print(f"  降雨系数: {self.climate['rain_factor']}")
+        print(f"淤塞程度: {self.sedimentation_level * 100:.0f}%")
+        print(f"异常概率: {self.anomaly_prob * 100:.0f}%")
+        print(f"发送间隔: {self.interval}s")
+        print(f"暗渠段数: {self.segment_count}")
+        print(f"竖井数量: {self.shaft_count}")
+        print(f"{'='*60}\n")
+
+        start_time = time.time()
         try:
             while True:
-                self.run_cycle()
-                time.sleep(self.interval_seconds)
+                self.run_once()
+                time.sleep(self.interval)
+
+                if duration and (time.time() - start_time) >= duration:
+                    print(f"\n达到运行时长 {duration}s，停止模拟")
+                    break
         except KeyboardInterrupt:
-            print("\n\nSimulator stopped by user")
-            if self.mqtt_client:
-                self.mqtt_client.loop_stop()
-                self.mqtt_client.disconnect()
-    
-    def run_backfill(self, days: int = 7):
-        """回溯生成历史数据"""
-        print(f"Backfilling {days} days of sensor data...")
-        
-        end_time = datetime.now()
-        start_time = end_time - timedelta(days=days)
-        
-        total_readings = 0
-        current = start_time
-        
-        while current <= end_time:
-            count = self.run_cycle(current)
-            total_readings += count
-            current += timedelta(hours=1)
-            
-            if total_readings % 100 == 0:
-                print(f"  Progress: {current.isoformat()} - {total_readings} readings")
-        
-        print(f"Backfill complete. Total readings: {total_readings}")
+            print(f"\n用户中断，共发送 {self.message_count} 条消息")
+        finally:
+            self.disconnect()
 
 
 def main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="坎儿井传感器模拟器")
-    parser.add_argument("--karez-id", type=int, default=1, help="坎儿井ID")
-    parser.add_argument("--api-url", type=str, default="http://localhost:8080/api", help="API基础URL")
-    parser.add_argument("--mqtt", action="store_true", help="使用MQTT发送数据")
-    parser.add_argument("--mqtt-broker", type=str, default="localhost", help="MQTT Broker地址")
-    parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT端口")
-    parser.add_argument("--interval", type=int, default=3600, help="上报间隔（秒）")
-    parser.add_argument("--backfill", type=int, default=0, help="回溯生成N天历史数据")
-    parser.add_argument("--once", action="store_true", help="只运行一次")
-    
-    args = parser.parse_args()
-    
-    simulator = KarezSensorSimulator(
-        karez_id=args.karez_id,
-        api_base_url=args.api_url,
-        mqtt_broker=args.mqtt_broker if args.mqtt else None,
-        mqtt_port=args.mqtt_port,
-        use_mqtt=args.mqtt,
-        interval_seconds=args.interval
+    parser = argparse.ArgumentParser(
+        description="坎儿井传感器模拟器 - 支持多种土壤类型和气候场景",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+土壤类型: {', '.join(SOIL_TYPES.keys())}
+气候场景: {', '.join(CLIMATE_SCENARIOS.keys())}
+
+示例:
+  # 正常气候 + 砂壤土
+  python sensor_simulator.py --soil-type sandy_loam --climate normal
+
+  # 极端干旱 + 粘土
+  python sensor_simulator.py --soil-type clay --climate drought --interval 3
+
+  # 暴雨洪水 + 砾石 + 30%淤塞
+  python sensor_simulator.py --soil-type gravel --climate flood --sedimentation 0.3
+
+  # 运行60秒后自动停止
+  python sensor_simulator.py --duration 60
+        """
     )
-    
-    if args.backfill > 0:
-        simulator.run_backfill(days=args.backfill)
-    elif args.once:
-        simulator.run_cycle()
-    else:
-        simulator.run_continuous()
+
+    parser.add_argument("--karez-id", type=int, default=1, help="坎儿井ID")
+    parser.add_argument("--segment-count", type=int, default=10, help="暗渠段数")
+    parser.add_argument("--shaft-count", type=int, default=20, help="竖井数量")
+    parser.add_argument("--interval", type=int, default=5, help="发送间隔(秒)")
+    parser.add_argument("--soil-type", type=str, default="sandy_loam",
+                        help=f"土壤类型: {', '.join(SOIL_TYPES.keys())}")
+    parser.add_argument("--climate-scenario", type=str, default="normal",
+                        help=f"气候场景: {', '.join(CLIMATE_SCENARIOS.keys())}")
+    parser.add_argument("--anomaly-prob", type=float, default=0.05,
+                        help="数据异常概率 (0-1)")
+    parser.add_argument("--sedimentation", type=float, default=0.0,
+                        help="淤塞程度 (0-1)")
+    parser.add_argument("--mqtt-broker", type=str, default=os.environ.get("MQTT_BROKER", "localhost"),
+                        help="MQTT broker地址")
+    parser.add_argument("--mqtt-port", type=int, default=int(os.environ.get("MQTT_PORT", "1883")),
+                        help="MQTT broker端口")
+    parser.add_argument("--mqtt-username", type=str, default=os.environ.get("MQTT_USERNAME"),
+                        help="MQTT用户名")
+    parser.add_argument("--mqtt-password", type=str, default=os.environ.get("MQTT_PASSWORD"),
+                        help="MQTT密码")
+    parser.add_argument("--mqtt-topic-prefix", type=str, default="karez",
+                        help="MQTT主题前缀")
+    parser.add_argument("--duration", type=int, default=None,
+                        help="运行时长(秒)，None表示一直运行")
+
+    args = parser.parse_args()
+
+    config = vars(args)
+    config.pop("func", None)
+
+    try:
+        sim = KarezSensorSimulator(config)
+        sim.connect_mqtt()
+        sim.run(args.duration)
+    except ValueError as e:
+        print(f"配置错误: {e}")
+        exit(1)
+    except Exception as e:
+        print(f"错误: {e}")
+        exit(1)
 
 
 if __name__ == "__main__":

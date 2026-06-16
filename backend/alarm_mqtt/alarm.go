@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"karez-system/config"
 	"karez-system/db"
+	"karez-system/metrics"
 	"karez-system/models"
 	"karez-system/mqtt"
 	"log"
@@ -245,6 +246,8 @@ func (am *AlarmManager) triggerAlert(ctx context.Context, alert *models.AlertEve
 			return
 		}
 	}
+
+	metrics.ObserveAlert(alert.AlertType, alert.AlertLevel)
 
 	if err := am.database.InsertAlertEvent(ctx, alert); err != nil {
 		log.Printf("Alarm MQTT: failed to insert alert event: %v", err)

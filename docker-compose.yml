@@ -1,0 +1,212 @@
+version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.15.3-pg16
+    container_name: karez-timescaledb
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TZ=${TZ}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./db/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/retention_policy.sql:/docker-entrypoint-initdb.d/retention_policy.sql:ro
+    command: >
+      postgres
+      -c shared_preload_libraries=timescaledb
+      -c max_connections=200
+      -c shared_buffers=512MB
+      -c effective_cache_size=1.5GB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - karez-network
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18
+    container_name: karez-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+      - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    environment:
+      - TZ=${TZ}
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t '$$SYS/broker/version' -n -q 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - karez-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: karez-backend
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_PORT=${MQTT_PORT}
+      - MQTT_CLIENT_ID=${MQTT_CLIENT_ID}
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MQTT_TOPIC_PREFIX=${MQTT_TOPIC_PREFIX}
+      - SERVER_PORT=${SERVER_PORT}
+      - SERVER_HOST=${SERVER_HOST}
+      - SIMULATION_INTERVAL=${SIMULATION_INTERVAL}
+      - ALERT_CHECK_INTERVAL=${ALERT_CHECK_INTERVAL}
+      - TZ=${TZ}
+      - GIN_MODE=release
+    ports:
+      - "8080:8080"
+      - "6060:6060"
+    volumes:
+      - ./backend/config:/app/config:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - karez-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: karez-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8088:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - karez-network
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: karez-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - karez-network
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: karez-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - timescaledb
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - TZ=${TZ}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - karez-network
+
+  sensor-simulator:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: karez-simulator
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_PORT=${MQTT_PORT}
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - TZ=${TZ}
+    command: ["--soil-type", "sandy_loam", "--climate-scenario", "normal", "--interval", "5"]
+    profiles:
+      - simulator
+    networks:
+      - karez-network
+
+volumes:
+  timescale_data:
+    driver: local
+  mosquitto_data:
+    driver: local
+  mosquitto_log:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  karez-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

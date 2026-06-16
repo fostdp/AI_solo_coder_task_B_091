@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"karez-system/config"
 	"karez-system/db"
+	"karez-system/metrics"
 	"karez-system/models"
 	"log"
 	"math"
@@ -86,6 +87,8 @@ func (s *HydraulicSimulator) run(ctx context.Context) {
 }
 
 func (s *HydraulicSimulator) runFullSimulation(ctx context.Context, karezID int) {
+	metrics.ObserveSimulationRun()
+
 	segments, err := s.database.GetAqueductSegments(ctx, karezID)
 	if err != nil {
 		log.Printf("Hydraulic Simulator: failed to get segments for karez %d: %v", karezID, err)

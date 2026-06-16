@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"karez-system/config"
 	"karez-system/db"
+	"karez-system/metrics"
 	"karez-system/models"
 	"karez-system/mqtt"
 	"log"
@@ -99,8 +100,11 @@ func (r *DtuReceiver) processSensorData(ctx context.Context, data *models.Sensor
 
 	if err := r.validator.Validate(data); err != nil {
 		log.Printf("DTU Receiver: validation failed for sensor %s: %v", data.SensorID, err)
+		metrics.ObserveSensorData(false)
 		return
 	}
+
+	metrics.ObserveSensorData(true)
 
 	if err := r.database.InsertSensorData(ctx, data); err != nil {
 		log.Printf("DTU Receiver: failed to insert sensor data: %v", err)
@@ -119,8 +123,11 @@ func (r *DtuReceiver) ReceiveHTTP(data *models.SensorData) error {
 	}
 
 	if err := r.validator.Validate(data); err != nil {
+		metrics.ObserveSensorData(false)
 		return fmt.Errorf("validation failed: %w", err)
 	}
+
+	metrics.ObserveSensorData(true)
 
 	ctx := context.Background()
 	if err := r.database.InsertSensorData(ctx, data); err != nil {
