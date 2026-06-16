@@ -121,6 +121,19 @@ func main() {
 		api.POST("/alerts/check/:karez_id", h.CheckAlerts)
 		api.POST("/alerts/acknowledge", h.AcknowledgeAlert)
 		api.POST("/alerts/resolve", h.ResolveAlert)
+
+		api.GET("/culture/evolution", h.GetTechnologyEvolution)
+		api.GET("/culture/comparison", h.GetCrossEraComparison)
+
+		api.GET("/water-level/scenarios", h.GetWaterLevelScenarios)
+		api.POST("/water-level/simulate", h.SimulateWaterLevelImpact)
+
+		api.GET("/virtual-dig/terrain", h.GetDefaultTerrain)
+		api.GET("/virtual-dig/projects", h.ListVirtualDigProjects)
+		api.GET("/virtual-dig/projects/:id", h.GetVirtualDigProject)
+		api.POST("/virtual-dig/projects", h.SaveVirtualDigProject)
+		api.POST("/virtual-dig/simulate", h.SimulateVirtualDig)
+		api.DELETE("/virtual-dig/projects/:id", h.DeleteVirtualDigProject)
 	}
 
 	go startPeriodicTasks(cfg, simRequestChan, alarmRequestChan)

@@ -5,7 +5,10 @@ import (
 	"karez-system/db"
 	dtureceiver "karez-system/dtu_receiver"
 	hydraulicsim "karez-system/hydraulic_sim"
+	karezculture "karez-system/karez_culture"
 	"karez-system/models"
+	waterlevel "karez-system/water_level"
+	virtualdig "karez-system/virtual_dig"
 	wateralloc "karez-system/water_allocator"
 	"net/http"
 	"strconv"
@@ -15,11 +18,14 @@ import (
 )
 
 type Handler struct {
-	database       *db.Database
-	dtuReceiver    *dtureceiver.DtuReceiver
-	hydraulicSim   *hydraulicsim.HydraulicSimulator
-	waterAllocator *wateralloc.WaterAllocator
-	alarmManager   *alarmmqtt.AlarmManager
+	database        *db.Database
+	dtuReceiver     *dtureceiver.DtuReceiver
+	hydraulicSim    *hydraulicsim.HydraulicSimulator
+	waterAllocator  *wateralloc.WaterAllocator
+	alarmManager    *alarmmqtt.AlarmManager
+	cultureService  *karezculture.CultureService
+	waterLevelSim   *waterlevel.WaterLevelSimulator
+	virtualDigService *virtualdig.VirtualDigService
 }
 
 func New(database *db.Database,
@@ -28,11 +34,14 @@ func New(database *db.Database,
 	waterAllocator *wateralloc.WaterAllocator,
 	alarmManager *alarmmqtt.AlarmManager) *Handler {
 	return &Handler{
-		database:       database,
-		dtuReceiver:    dtuReceiver,
-		hydraulicSim:   hydraulicSim,
-		waterAllocator: waterAllocator,
-		alarmManager:   alarmManager,
+		database:        database,
+		dtuReceiver:     dtuReceiver,
+		hydraulicSim:    hydraulicSim,
+		waterAllocator:  waterAllocator,
+		alarmManager:    alarmManager,
+		cultureService:  karezculture.New(),
+		waterLevelSim:   waterlevel.New(),
+		virtualDigService: virtualdig.New(),
 	}
 }
 
@@ -431,4 +440,104 @@ func (h *Handler) GetDashboardData(c *gin.Context) {
 		"supply_ratio":   supplyRatio,
 		"alert_count":    len(alerts),
 	})
+}
+
+func (h *Handler) GetTechnologyEvolution(c *gin.Context) {
+	analysis := h.cultureService.GetTechnologyEvolution()
+	c.JSON(http.StatusOK, analysis)
+}
+
+func (h *Handler) GetCrossEraComparison(c *gin.Context) {
+	comparison := h.cultureService.GetCrossEraComparison()
+	c.JSON(http.StatusOK, comparison)
+}
+
+func (h *Handler) GetWaterLevelScenarios(c *gin.Context) {
+	scenarios := h.waterLevelSim.GetDefaultScenarios()
+	c.JSON(http.StatusOK, scenarios)
+}
+
+func (h *Handler) SimulateWaterLevelImpact(c *gin.Context) {
+	var req models.WaterLevelSimulationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	results := h.waterLevelSim.SimulateWaterLevelImpact(req)
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "success",
+		"results":  results,
+		"count":    len(results),
+	})
+}
+
+func (h *Handler) GetDefaultTerrain(c *gin.Context) {
+	terrain := h.virtualDigService.GetDefaultTerrain()
+	c.JSON(http.StatusOK, terrain)
+}
+
+func (h *Handler) SaveVirtualDigProject(c *gin.Context) {
+	var req models.VirtualDigSaveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	project, err := h.virtualDigService.SaveProject(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"project": project,
+	})
+}
+
+func (h *Handler) SimulateVirtualDig(c *gin.Context) {
+	var req models.VirtualDigSimulateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	project, err := h.virtualDigService.SimulateDesign(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"project": project,
+	})
+}
+
+func (h *Handler) GetVirtualDigProject(c *gin.Context) {
+	id := c.Param("id")
+	project, exists := h.virtualDigService.GetProject(id)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
+		return
+	}
+	c.JSON(http.StatusOK, project)
+}
+
+func (h *Handler) ListVirtualDigProjects(c *gin.Context) {
+	projects := h.virtualDigService.ListProjects()
+	c.JSON(http.StatusOK, gin.H{
+		"projects": projects,
+		"count":    len(projects),
+	})
+}
+
+func (h *Handler) DeleteVirtualDigProject(c *gin.Context) {
+	id := c.Param("id")
+	if ok := h.virtualDigService.DeleteProject(id); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Project deleted"})
 }
