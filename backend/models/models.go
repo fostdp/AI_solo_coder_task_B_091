@@ -156,12 +156,17 @@ type EraTechnology struct {
 	LabourRequirement float64 `json:"labour_requirement_person_days_per_km"`
 	MaintenanceCycle string   `json:"maintenance_cycle"`
 	HistoricalNotes  string   `json:"historical_notes"`
+	DataSource       string   `json:"data_source"`
+	References       []string `json:"references"`
+	ConfidenceLevel  string   `json:"confidence_level"`
 }
 
 type TechnologyEvolutionAnalysis struct {
 	Evolutions     []EraTechnology `json:"evolutions"`
 	KeyInnovations []Innovation    `json:"key_innovations"`
 	Summary        string          `json:"summary"`
+	DataSources    []string        `json:"data_sources"`
+	ResearchMethod string          `json:"research_method"`
 }
 
 type Innovation struct {
@@ -181,6 +186,9 @@ type DripIrrigationSystem struct {
 	CropYieldBoost    float64 `json:"crop_yield_boost_percent"`
 	LifespanYears     int     `json:"lifespan_years"`
 	TechnologyLevel   string  `json:"technology_level"`
+	StandardBasis     string  `json:"standard_basis"`
+	ApplicableConditions string `json:"applicable_conditions"`
+	SystemType        string  `json:"system_type"`
 }
 
 type CrossEraComparison struct {
@@ -188,6 +196,8 @@ type CrossEraComparison struct {
 	DripIrrigation    DripIrrigationSystem   `json:"drip_irrigation"`
 	ComparisonMetrics []ComparisonItem       `json:"comparison_metrics"`
 	Conclusion        string                 `json:"conclusion"`
+	ComparisonStandards []string             `json:"comparison_standards"`
+	ScopeOfApplication string                `json:"scope_of_application"`
 }
 
 type KarezComparisonMetrics struct {
@@ -248,6 +258,18 @@ type WaterLevelSimulationResult struct {
 	TotalDecline   float64               `json:"total_decline_percent"`
 	YearsUntilDry  int                   `json:"years_until_dry"`
 	Recommendations []string             `json:"recommendations"`
+	AquiferInfo    AquiferInfo           `json:"aquifer_info"`
+	ModelAssumptions []string            `json:"model_assumptions"`
+}
+
+type AquiferInfo struct {
+	Type             string  `json:"type"`
+	Permeability     float64 `json:"permeability_m_per_s"`
+	SpecificYield    float64 `json:"specific_yield"`
+	Transmissibility float64 `json:"transmissibility_m2_per_day"`
+	RechargeRate     float64 `json:"recharge_rate_m_per_year"`
+	DataSource       string  `json:"data_source"`
+	TypicalLocations string  `json:"typical_locations"`
 }
 
 type VirtualDigProject struct {
@@ -349,4 +371,38 @@ type VirtualDigSimulateRequest struct {
 	TerrainMap  TerrainConfig `json:"terrain_map" binding:"required"`
 	Channels    []DigChannel  `json:"channels"`
 	Shafts      []DigShaft    `json:"shafts"`
+}
+
+type DigGuideStep struct {
+	StepNumber int      `json:"step_number"`
+	Title      string   `json:"title"`
+	Description string  `json:"description"`
+	Tips       []string `json:"tips"`
+	Completed  bool     `json:"completed"`
+}
+
+type DigGuide struct {
+	GuideID    string        `json:"guide_id"`
+	GuideName  string        `json:"guide_name"`
+	Steps      []DigGuideStep `json:"steps"`
+	CurrentStep int          `json:"current_step"`
+}
+
+type DesignTemplate struct {
+	TemplateID   string        `json:"template_id"`
+	TemplateName string        `json:"template_name"`
+	Description  string        `json:"description"`
+	Difficulty   string        `json:"difficulty"`
+	EstimatedTime string       `json:"estimated_time"`
+	TerrainMap   TerrainConfig `json:"terrain_map"`
+	Channels     []DigChannel  `json:"channels"`
+	Shafts       []DigShaft    `json:"shafts"`
+	Tags         []string      `json:"tags"`
+}
+
+type QuickTip struct {
+	TipID   string `json:"tip_id"`
+	Category string `json:"category"`
+	Content  string `json:"content"`
+	Icon     string `json:"icon"`
 }

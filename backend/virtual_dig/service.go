@@ -64,6 +64,263 @@ func (s *VirtualDigService) GetDefaultTerrain() models.TerrainConfig {
 	}
 }
 
+func (s *VirtualDigService) GetDigGuide() models.DigGuide {
+	return models.DigGuide{
+		GuideID:   "guide_basic",
+		GuideName: "坎儿井设计入门指南",
+		Steps: []models.DigGuideStep{
+			{
+				StepNumber:  1,
+				Title:       "了解地形",
+				Description: "首先查看地形图，了解山体坡度、地下水位深度和地质条件。地图上方是山区（水头），下方是绿洲（水尾）。",
+				Tips: []string{
+					"绿色区域表示地下水位较浅",
+					"避开红色障碍物（岩石、断层）",
+					"坎儿井通常从山脚下向绿洲方向挖掘",
+				},
+				Completed: false,
+			},
+			{
+				StepNumber:  2,
+				Title:       "设计主暗渠走向",
+				Description: "在地图上点击添加暗渠节点，确定主暗渠的走向。暗渠应从高海拔向低海拔延伸，确保水能自流。",
+				Tips: []string{
+					"暗渠坡度应控制在0.1%-1.5%之间",
+					"尽量保持直线，减少弯道",
+					"避开障碍物可以降低施工难度",
+					"至少需要2个点才能确定一条暗渠",
+				},
+				Completed: false,
+			},
+			{
+				StepNumber:  3,
+				Title:       "布置竖井",
+				Description: "沿暗渠每隔一定距离设置竖井，用于施工通风、出土和后期维护。竖井深度应能触及地下水位。",
+				Tips: []string{
+					"竖井间距一般为20-50米",
+					"竖井越深，间距应越小",
+					"确保竖井底部低于地下水位",
+					"至少需要3个竖井才能保证通风效果",
+				},
+				Completed: false,
+			},
+			{
+				StepNumber:  4,
+				Title:       "查看模拟结果",
+				Description: "系统会自动计算暗渠长度、坡度、开挖量、预估流量等参数，并进行可行性评估。",
+				Tips: []string{
+					"关注可行性评分，越高越好",
+					"红色警告表示有严重问题需要解决",
+					"可以尝试调整设计优化评分",
+				},
+				Completed: false,
+			},
+			{
+				StepNumber:  5,
+				Title:       "优化设计方案",
+				Description: "根据评估结果调整设计，优化暗渠走向和竖井布置，提高可行性评分。",
+				Tips: []string{
+					"增加触及地下水的竖井数量",
+					"调整坡度在合理范围内",
+					"避开障碍物减少施工难度",
+					"平衡成本和效益",
+				},
+				Completed: false,
+			},
+		},
+		CurrentStep: 1,
+	}
+}
+
+func (s *VirtualDigService) GetDesignTemplates() []models.DesignTemplate {
+	terrain := s.GetDefaultTerrain()
+
+	return []models.DesignTemplate{
+		{
+			TemplateID:   "tpl_beginner",
+			TemplateName: "新手入门方案",
+			Description:  "简单直接的坎儿井设计，适合初学者了解基本原理。",
+			Difficulty:   "简单",
+			EstimatedTime: "5分钟",
+			TerrainMap:   terrain,
+			Channels: []models.DigChannel{
+				{
+					Name:   "主暗渠",
+					IsMain: true,
+					Width:  1.2,
+					Height: 1.8,
+					Points: []models.GeoPoint{
+						{X: 1.0, Y: 0.5, Elevation: 845},
+						{X: 1.0, Y: 3.0, Elevation: 830},
+						{X: 1.0, Y: 6.0, Elevation: 812},
+						{X: 1.0, Y: 7.5, Elevation: 803},
+					},
+				},
+			},
+			Shafts: []models.DigShaft{
+				{Name: "1号竖井", Position: models.GeoPoint{X: 1.0, Y: 1.0, Elevation: 842}, Depth: 45, Diameter: 1.2},
+				{Name: "2号竖井", Position: models.GeoPoint{X: 1.0, Y: 3.0, Elevation: 830}, Depth: 40, Diameter: 1.2},
+				{Name: "3号竖井", Position: models.GeoPoint{X: 1.0, Y: 5.0, Elevation: 818}, Depth: 35, Diameter: 1.2},
+				{Name: "4号竖井", Position: models.GeoPoint{X: 1.0, Y: 7.0, Elevation: 806}, Depth: 30, Diameter: 1.2},
+			},
+			Tags: []string{"入门", "教学", "简单"},
+		},
+		{
+			TemplateID:   "tpl_standard",
+			TemplateName: "标准灌溉方案",
+			Description:  "适用于中型绿洲的标准坎儿井设计，兼具集水效率和经济性。",
+			Difficulty:   "中等",
+			EstimatedTime: "10分钟",
+			TerrainMap:   terrain,
+			Channels: []models.DigChannel{
+				{
+					Name:   "主暗渠",
+					IsMain: true,
+					Width:  1.5,
+					Height: 2.0,
+					Points: []models.GeoPoint{
+						{X: 2.0, Y: 0.3, Elevation: 848},
+						{X: 2.0, Y: 2.5, Elevation: 834},
+						{X: 2.0, Y: 5.0, Elevation: 818},
+						{X: 2.0, Y: 7.0, Elevation: 806},
+					},
+				},
+				{
+					Name:   "东支渠",
+					IsMain: false,
+					Width:  1.0,
+					Height: 1.5,
+					Points: []models.GeoPoint{
+						{X: 2.0, Y: 4.0, Elevation: 824},
+						{X: 3.5, Y: 4.0, Elevation: 824},
+						{X: 4.5, Y: 4.5, Elevation: 821},
+					},
+				},
+			},
+			Shafts: []models.DigShaft{
+				{Name: "集水竖井", Position: models.GeoPoint{X: 2.0, Y: 0.5, Elevation: 846}, Depth: 50, Diameter: 1.5},
+				{Name: "2号竖井", Position: models.GeoPoint{X: 2.0, Y: 2.0, Elevation: 837}, Depth: 45, Diameter: 1.2},
+				{Name: "3号竖井", Position: models.GeoPoint{X: 2.0, Y: 4.0, Elevation: 824}, Depth: 38, Diameter: 1.2},
+				{Name: "4号竖井", Position: models.GeoPoint{X: 2.0, Y: 6.0, Elevation: 812}, Depth: 32, Diameter: 1.2},
+				{Name: "5号竖井", Position: models.GeoPoint{X: 2.0, Y: 7.5, Elevation: 803}, Depth: 28, Diameter: 1.0},
+				{Name: "东1号竖井", Position: models.GeoPoint{X: 3.5, Y: 4.0, Elevation: 824}, Depth: 35, Diameter: 1.0},
+			},
+			Tags: []string{"标准", "灌溉", "实用"},
+		},
+		{
+			TemplateID:   "tpl_challenge",
+			TemplateName: "挑战级复杂方案",
+			Description:  "包含多条支渠和大量竖井的复杂坎儿井系统，适合有经验的用户。",
+			Difficulty:   "困难",
+			EstimatedTime: "20分钟",
+			TerrainMap:   terrain,
+			Channels: []models.DigChannel{
+				{
+					Name:   "主暗渠",
+					IsMain: true,
+					Width:  2.0,
+					Height: 2.5,
+					Points: []models.GeoPoint{
+						{X: 0.8, Y: 0.5, Elevation: 845},
+						{X: 1.5, Y: 2.0, Elevation: 836},
+						{X: 2.5, Y: 3.5, Elevation: 826},
+						{X: 3.0, Y: 5.0, Elevation: 818},
+						{X: 3.5, Y: 6.5, Elevation: 809},
+						{X: 4.0, Y: 7.5, Elevation: 803},
+					},
+				},
+				{
+					Name:   "北支渠",
+					IsMain: false,
+					Width:  1.2,
+					Height: 1.8,
+					Points: []models.GeoPoint{
+						{X: 1.5, Y: 2.0, Elevation: 836},
+						{X: 0.5, Y: 3.0, Elevation: 830},
+					},
+				},
+				{
+					Name:   "南支渠",
+					IsMain: false,
+					Width:  1.2,
+					Height: 1.8,
+					Points: []models.GeoPoint{
+						{X: 2.5, Y: 3.5, Elevation: 826},
+						{X: 4.0, Y: 3.5, Elevation: 827},
+						{X: 4.5, Y: 4.5, Elevation: 821},
+					},
+				},
+			},
+			Shafts: []models.DigShaft{
+				{Name: "集水竖井1", Position: models.GeoPoint{X: 0.8, Y: 0.5, Elevation: 845}, Depth: 55, Diameter: 1.8},
+				{Name: "集水竖井2", Position: models.GeoPoint{X: 1.2, Y: 1.0, Elevation: 842}, Depth: 52, Diameter: 1.5},
+				{Name: "主井1", Position: models.GeoPoint{X: 1.5, Y: 2.0, Elevation: 836}, Depth: 48, Diameter: 1.5},
+				{Name: "主井2", Position: models.GeoPoint{X: 2.5, Y: 3.5, Elevation: 826}, Depth: 42, Diameter: 1.5},
+				{Name: "主井3", Position: models.GeoPoint{X: 3.0, Y: 5.0, Elevation: 818}, Depth: 36, Diameter: 1.2},
+				{Name: "主井4", Position: models.GeoPoint{X: 3.5, Y: 6.5, Elevation: 809}, Depth: 30, Diameter: 1.2},
+				{Name: "出口竖井", Position: models.GeoPoint{X: 4.0, Y: 7.5, Elevation: 803}, Depth: 25, Diameter: 1.0},
+				{Name: "北支井", Position: models.GeoPoint{X: 0.5, Y: 3.0, Elevation: 830}, Depth: 40, Diameter: 1.0},
+				{Name: "南支井1", Position: models.GeoPoint{X: 4.0, Y: 3.5, Elevation: 827}, Depth: 38, Diameter: 1.0},
+				{Name: "南支井2", Position: models.GeoPoint{X: 4.5, Y: 4.5, Elevation: 821}, Depth: 35, Diameter: 1.0},
+			},
+			Tags: []string{"高级", "复杂", "挑战"},
+		},
+	}
+}
+
+func (s *VirtualDigService) GetQuickTips() []models.QuickTip {
+	return []models.QuickTip{
+		{
+			TipID:   "tip_001",
+			Category: "地形",
+			Content:  "坎儿井的水头应选择在地下水位较高的山脚下，这样可以获得更稳定的水源。",
+			Icon:     "mountain",
+		},
+		{
+			TipID:   "tip_002",
+			Category: "暗渠",
+			Content:  "暗渠坡度太小容易淤积，太大则冲刷严重，最佳坡度为0.5%-1%。",
+			Icon:     "ruler",
+		},
+		{
+			TipID:   "tip_003",
+			Category: "竖井",
+			Content:  "竖井不仅用于取水，更重要的是施工时的通风和出土，以及后期的维护通道。",
+			Icon:     "circle",
+		},
+		{
+			TipID:   "tip_004",
+			Category: "地质",
+			Content:  "砾石地层渗透性最好，集水效率最高；黏土地层最差，需要做防渗处理。",
+			Icon:     "layers",
+		},
+		{
+			TipID:   "tip_005",
+			Category: "经济",
+			Content:  "坎儿井初期投入大但维护成本低，长期来看比机井更经济，寿命可达百年以上。",
+			Icon:     "coin",
+		},
+		{
+			TipID:   "tip_006",
+			Category: "生态",
+			Content:  "坎儿井不消耗能源、不破坏地下水层，是最环保的灌溉方式之一。",
+			Icon:     "leaf",
+		},
+		{
+			TipID:   "tip_007",
+			Category: "施工",
+			Content:  "传统坎儿井由有经验的'坎儿井匠'主持修建，师徒相传，需要丰富的实践经验。",
+			Icon:     "tool",
+		},
+		{
+			TipID:   "tip_008",
+			Category: "维护",
+			Content:  "每年春季需要对坎儿井进行清淤，确保水流畅通。这是坎儿井维护的最重要工作。",
+			Icon:     "refresh",
+		},
+	}
+}
+
 func (s *VirtualDigService) SaveProject(req models.VirtualDigSaveRequest) (*models.VirtualDigProject, error) {
 	project := &models.VirtualDigProject{
 		ID:          s.generateID(),

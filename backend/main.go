@@ -129,6 +129,9 @@ func main() {
 		api.POST("/water-level/simulate", h.SimulateWaterLevelImpact)
 
 		api.GET("/virtual-dig/terrain", h.GetDefaultTerrain)
+		api.GET("/virtual-dig/guide", h.GetDigGuide)
+		api.GET("/virtual-dig/templates", h.GetDesignTemplates)
+		api.GET("/virtual-dig/tips", h.GetQuickTips)
 		api.GET("/virtual-dig/projects", h.ListVirtualDigProjects)
 		api.GET("/virtual-dig/projects/:id", h.GetVirtualDigProject)
 		api.POST("/virtual-dig/projects", h.SaveVirtualDigProject)

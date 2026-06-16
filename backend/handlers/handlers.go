@@ -541,3 +541,24 @@ func (h *Handler) DeleteVirtualDigProject(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Project deleted"})
 }
+
+func (h *Handler) GetDigGuide(c *gin.Context) {
+	guide := h.virtualDigService.GetDigGuide()
+	c.JSON(http.StatusOK, guide)
+}
+
+func (h *Handler) GetDesignTemplates(c *gin.Context) {
+	templates := h.virtualDigService.GetDesignTemplates()
+	c.JSON(http.StatusOK, gin.H{
+		"templates": templates,
+		"count":     len(templates),
+	})
+}
+
+func (h *Handler) GetQuickTips(c *gin.Context) {
+	tips := h.virtualDigService.GetQuickTips()
+	c.JSON(http.StatusOK, gin.H{
+		"tips":  tips,
+		"count": len(tips),
+	})
+}

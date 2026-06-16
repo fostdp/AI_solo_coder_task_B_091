@@ -163,8 +163,8 @@ func TestGetCrossEraComparison_WaterEfficiencyValidation(t *testing.T) {
 	karezEff := comparison.KarezSystem.WaterUseEfficiency
 	dripEff := comparison.DripIrrigation.WaterUseEfficiency
 
-	if karezEff < 70 || karezEff > 95 {
-		t.Errorf("Karez water use efficiency should be realistic (70-95%%), got %f", karezEff)
+	if karezEff < 30 || karezEff > 60 {
+		t.Errorf("Karez water use efficiency should be realistic (30-60%%, considering conveyance losses), got %f", karezEff)
 	}
 
 	if dripEff < 85 || dripEff > 99 {
