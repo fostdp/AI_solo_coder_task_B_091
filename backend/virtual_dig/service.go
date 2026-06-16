@@ -201,7 +201,7 @@ func (s *VirtualDigService) calculateShaftMetrics(sh *models.DigShaft, terrain m
 	}
 
 	shaftBottomElev := sh.Position.Elevation - sh.Depth
-	waterTableElev := terrain.HeadElevation - terrain.WaterTableDepth
+	waterTableElev := terrainElev - terrain.WaterTableDepth
 	sh.ReachesWater = shaftBottomElev <= waterTableElev
 
 	if sh.DistanceFromHead == 0 {
@@ -337,7 +337,16 @@ func (s *VirtualDigService) evaluateFeasibility(project *models.VirtualDigProjec
 	economicScore := s.evaluateEconomics(project, &issues, &suggestions)
 
 	overallScore := (hydraulicScore + geologicalScore + economicScore) / 3.0
-	isFeasible := overallScore >= 50
+
+	hasCriticalIssue := false
+	for _, issue := range issues {
+		if issue.Severity == "严重" {
+			hasCriticalIssue = true
+			break
+		}
+	}
+
+	isFeasible := overallScore >= 50 && !hasCriticalIssue
 
 	if overallScore >= 80 {
 		suggestions = append(suggestions, "设计方案优秀，可进入施工准备阶段。")
@@ -411,7 +420,7 @@ func (s *VirtualDigService) evaluateHydraulics(
 	}
 
 	if len(project.Shafts) < 3 && len(project.Channels) > 0 {
-		score -= 10
+		score -= 25
 		*issues = append(*issues, models.FeasibilityIssue{
 			Severity: "警告",
 			Message:  "竖井数量不足，不利于施工通风和后期维护。",
@@ -424,8 +433,8 @@ func (s *VirtualDigService) evaluateHydraulics(
 			waterReachingCount++
 		}
 	}
-	if len(project.Shafts) > 0 && waterReachingCount < len(project.Shafts)/2 {
-		score -= 15
+	if len(project.Shafts) > 0 && float64(waterReachingCount) < float64(len(project.Shafts))/2 {
+		score -= 35
 		*issues = append(*issues, models.FeasibilityIssue{
 			Severity: "严重",
 			Message:  "超过半数竖井未触及地下水位，集水能力不足。",
@@ -533,7 +542,10 @@ func (s *VirtualDigService) evaluateEconomics(
 
 	if stats.TotalExcavationVolume > 100000 {
 		score -= 10
-		*suggestions = append(*suggestions, "工程量较大，建议分期分段施工。")
+		*issues = append(*issues, models.FeasibilityIssue{
+			Severity: "注意",
+			Message:  "工程量较大，建议分期分段施工。",
+		})
 	}
 
 	if stats.EstimatedManDays > 50000 {

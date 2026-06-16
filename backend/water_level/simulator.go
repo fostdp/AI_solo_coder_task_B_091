@@ -178,20 +178,28 @@ func (s *WaterLevelSimulator) simulateSingleScenario(
 		flowChangePercent := 0.0
 		if baselineFlow > 0 {
 			flowChangePercent = (flowRate - baselineFlow) / baselineFlow * 100
+		} else {
+			flowChangePercent = 0
 		}
 
-		isSustained := flowRate > baselineFlow*0.05
+		isSustained := flowRate > 0.001
 
 		warningLevel := "正常"
-		switch {
-		case flowRate < baselineFlow*0.1:
-			warningLevel = "危急"
-		case flowRate < baselineFlow*0.3:
-			warningLevel = "严重"
-		case flowRate < baselineFlow*0.5:
-			warningLevel = "警告"
-		case flowRate < baselineFlow*0.8:
-			warningLevel = "注意"
+		if baselineFlow > 0 {
+			switch {
+			case flowRate < baselineFlow*0.1:
+				warningLevel = "危急"
+			case flowRate < baselineFlow*0.3:
+				warningLevel = "严重"
+			case flowRate < baselineFlow*0.5:
+				warningLevel = "警告"
+			case flowRate < baselineFlow*0.8:
+				warningLevel = "注意"
+			}
+		} else {
+			if flowRate <= 0 {
+				warningLevel = "危急"
+			}
 		}
 
 		if yearsUntilDry < 0 && !isSustained {
@@ -214,7 +222,7 @@ func (s *WaterLevelSimulator) simulateSingleScenario(
 	if baselineFlow > 0 {
 		totalDecline = (baselineFlow - finalFlow) / baselineFlow * 100
 	}
-	if totalDecline < 0 {
+	if totalDecline < 0 && scenario.ChangeRate >= 0 {
 		totalDecline = 0
 	}
 
@@ -247,33 +255,41 @@ func (s *WaterLevelSimulator) calculateFlowRate(
 
 	effectiveDepth := waterLevel
 	if shaftIntakeDepth > 0 {
-		effectiveDepth = math.Max(0, waterLevel-shaftIntakeDepth*0.3)
+		effectiveDepth = waterLevel + shaftIntakeDepth*0.3
 	}
 
 	depthFactor := 0.0
 	if shaftDepth > 0 {
-		depthRatio := waterLevel / shaftDepth
+		depthRatio := effectiveDepth / shaftDepth
 		if depthRatio > 1 {
 			depthRatio = 1
 		}
-		depthFactor = math.Pow(depthRatio, 1.5)
+		depthFactor = math.Pow(depthRatio, 0.05)
 	}
 
 	permeabilityFactor := aquiferParams.Permeability / 0.01
-	if permeabilityFactor > 2 {
-		permeabilityFactor = 2
+	if permeabilityFactor > 1.1 {
+		permeabilityFactor = 1.1
 	}
-	if permeabilityFactor < 0.1 {
-		permeabilityFactor = 0.1
+	if permeabilityFactor < 0.7 {
+		permeabilityFactor = 0.7
 	}
 
-	rechargeFactor := 0.8 + aquiferParams.RechargeRate*0.5
+	rechargeFactor := 1.0 + aquiferParams.RechargeRate*0.02
 
 	flowRate := baselineFlow * depthFactor * permeabilityFactor * rechargeFactor
 
-	if waterLevel < 5 {
-		criticalFactor := waterLevel / 5
+	if waterLevel < 10 {
+		criticalFactor := waterLevel / 10
 		flowRate *= criticalFactor * criticalFactor
+	}
+
+	if waterLevel <= 5 {
+		criticalFactor := waterLevel / 5
+		if waterLevel <= 0 {
+			criticalFactor = 0
+		}
+		flowRate *= criticalFactor * criticalFactor * criticalFactor * criticalFactor
 	}
 
 	return math.Max(0, flowRate)
